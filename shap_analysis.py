@@ -180,6 +180,12 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut.xlsx'
     # if file doesn't exist, save to excel
     if not os.path.exists(significant_shap_file):
+        # atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+        # roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
+        # rois = list(shap_signficiant_ROI.columns)
+        # rois = [roi for roi in rois if roi!="fold"]
+        # roi_names = ["fold"]+[roi_names_map[val] for val in rois]
+        # shap_signficiant_ROI.columns = roi_names
         shap_signficiant_ROI.to_excel(significant_shap_file, index=False)
     
     

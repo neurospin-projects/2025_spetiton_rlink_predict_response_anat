@@ -34,7 +34,7 @@ def plot_glassbrain_general(dict_plot=None, title="", list_negative=None):
         else : baseid = int_list[0]
         if name in list_negative:
             texture_arr[ref_arr == baseid] = -val
-        else : texture_arr[ref_arr == baseid] = -val
+        else : texture_arr[ref_arr == baseid] = val
 
     print("nb unique vals :",len(np.unique(texture_arr)), " \n",np.unique(texture_arr))
     print(np.shape(texture_arr))
