@@ -1,21 +1,70 @@
 import pickle
-import pandas as pd
+import pandas as pd, sys
 import numpy as np
 import nibabel
 import xml.etree.ElementTree as ET
+from sklearn.preprocessing import StandardScaler
+
 from nilearn import plotting, image
 import matplotlib.pyplot as plt
 from nilearn.image import resample_to_img
-
+sys.path.append('/neurospin/psy_sbox/temp_sara/')
+from pylearn_mulm.mulm.residualizer import Residualizer
 # inputs
-ROOT = "/neurospin/signatures/2025_rlink/"
+ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
+DATA_DIR=ROOT+"data/processed/"
+
 FILEM00_ROI = "df_ROI_age_sex_site_fevrier2025_M00_labels_as_strings.csv"
 FILEM00_M03_ROI = "df_ROI_age_sex_site_fevrier2025_M00_M03_labels_as_strings.csv"
 VOL_FILE_VBM = "/drf/local/spm12/tpm/labels_Neuromorphometrics.nii"
 VBMLOOKUP_FILE = "/drf/local/spm12/tpm/labels_Neuromorphometrics.xml"
 ONE_SUBJECT_NIFTI = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long/sub-11327/ses-M00/mri/mwp1rusub-11327_ses-M00_acq-3DT1_rec-yBCyGC_run-1_T1w.nii"
-BRAIN_MASK_PATH = ROOT+"mni_cerebrum-gm-mask_1.5mm.nii.gz"
+BRAIN_MASK_PATH = DATA_DIR+"mni_cerebrum-gm-mask_1.5mm.nii.gz"
 
+def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
+    assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
+
+    # Read data
+    if dataframe is None: 
+        if WM_roi : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_WM_Vol.csv")
+        else : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
+    else:
+        assert isinstance(dataframe, pd.DataFrame), "the 'dataframe' variable provided is not a pandas DataFrame!" 
+        df_ROI_age_sex_site = dataframe
+
+    df_ROI_age_sex_site_res = df_ROI_age_sex_site.copy()
+    df_ROI_age_sex_site_res["y"] = df_ROI_age_sex_site_res["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
+    list_roi = get_rois(WM = WM_roi)
+    # if we wish to focus on GM ROI (if we do so, still no regions stand out after correction for multiple tests)
+    # but the minimum p-value after correction for multiple tests is 0.104 (ROI with pvalues <=0.11 are L&R Amygdala, L&R Hippocampus, 
+    # and Left Cerebellum White Matter
+    # with CSF volumes only : lowest p-values after correction are 0.2592
+    # list_roi = [ r for r in list_roi if r.endswith("_GM_Vol")] 
+    X_arr = df_ROI_age_sex_site_res[list_roi].values
+
+    # residualize and scale ROIs
+    # 1. fit residualizer
+    if res!="no_res":
+        if res=="res_age_sex_site": formula = "age + sex + site"
+        elif res=="res_age_sex": formula="age + sex"
+
+        residualizer = Residualizer(
+            data=df_ROI_age_sex_site_res,
+            formula_res=formula,
+            formula_full=formula + " + y"
+        )
+        Zres = residualizer.get_design_mat(df_ROI_age_sex_site_res[["age", "sex", "site", "y"]])
+        residualizer.fit(X_arr, Zres)
+        X_arr = residualizer.transform(X_arr, Zres)
+
+    # 2. fit scaler
+    scaler_ = StandardScaler()
+    X_arr = scaler_.fit_transform(X_arr) # for GM and CSF ROI : (116,268) shape --> 116 subjects, 268 ROI (unless M3-M0, in which case n=91; for WM ROI: 134 ROI)
+
+    df_X = pd.DataFrame(X_arr , columns = list_roi)
+    df_X[["age", "sex", "site", "y"]]=df_ROI_age_sex_site[["age", "sex", "site", "y"]]
+
+    return df_X
 
 def get_neuromorphometrics_dict():
     tree = ET.parse(VBMLOOKUP_FILE)
@@ -33,12 +82,19 @@ def get_neuromorphometrics_dict():
 
     return index_to_label_roi
 
-def get_rois():
+def get_rois(WM=False):
     dict_n = get_neuromorphometrics_dict()
     roi_neuromorphometrics = list(dict_n.values())
     roi_neuromorphometrics = [roi for roi in roi_neuromorphometrics if roi not in ["Left vessel","Right vessel"]]
-    all_rois = [roi+"_GM_Vol" for roi in roi_neuromorphometrics]+[roi+"_CSF_Vol" for roi in roi_neuromorphometrics]
-    assert len(all_rois)==134*2,"wrong number of ROIs" # 134 ROI by hemisphere in Neuromorphometrics
+    
+    if WM: 
+        all_rois = [roi+"_WM_Vol" for roi in roi_neuromorphometrics]
+        assert len(all_rois)==134,"wrong number of ROIs" # 134 ROI by hemisphere in Neuromorphometrics
+
+    else: 
+        all_rois = [roi+"_GM_Vol" for roi in roi_neuromorphometrics]+[roi+"_CSF_Vol" for roi in roi_neuromorphometrics]
+        assert len(all_rois)==134*2,"wrong number of ROIs" # 134 ROI by hemisphere in Neuromorphometrics
+
     return all_rois
 
 def round_sci(x, sig=2):

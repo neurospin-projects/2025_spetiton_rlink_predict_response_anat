@@ -69,6 +69,7 @@ def create_shap_summary_df_h1_h0(nb_permutations=1000 , cv_folds_seed=1):
 
     dict_shap_and_features = {"shap values concatenated":concatenated_shap, "features concatenated": df_sorted[get_rois()].values}
     path_dict_shap_and_features= FEAT_IMPTCE_RES_DIR+'dict_shap_and_features_concatenated'+str(nb_permutations)+'_random_permut.pkl'
+    
     # if file doesn't exist in pkl format, also save to pkl
     if not os.path.exists(path_dict_shap_and_features):
         save_pkl(dict_shap_and_features,path_dict_shap_and_features)
@@ -104,66 +105,62 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     df_all_shap = read_pkl(path_shap_summary)
 
     roi_names = get_rois()
-    assert len(roi_names)==268, "wrong number of ROIs"
+    assert len(roi_names)==268, "Expected 268 ROIs"
 
-    # Unfold the arrays
-    shap_expanded_df = pd.DataFrame(
-        df_all_shap["mean_abs_shap"].tolist(),  # turn arrays into rows
-        columns=roi_names
-    )
+    # Expand the "mean_abs_shap" arrays into individual columns for each ROI
+    shap_expanded_df = pd.DataFrame(df_all_shap["mean_abs_shap"].tolist(), columns=roi_names)
     shap_expanded_df.insert(0, "fold", df_all_shap["fold"].values) # add fold col back
     # print(shap_expanded_df)
 
-    # Get the h1 row (fold == 0)
-    h1_row = shap_expanded_df[shap_expanded_df["fold"] == 0].iloc[0]
+    # Extract SHAP values for the true model (h1 = fold 0)
+    row_h1_values = shap_expanded_df[shap_expanded_df["fold"] == 0].iloc[0]
 
-    # Compare all rows (h0) to the first row (h1)
-    comparison_df = shap_expanded_df[shap_expanded_df["fold"] != 0][roi_names] > h1_row[roi_names]
+    # --- Uncorrected p-values (per ROI) ---
+    # Compare SHAP values from permutations (h0) to the h1 SHAP values
+    comparison_df = shap_expanded_df[shap_expanded_df["fold"] != 0][roi_names] > row_h1_values[roi_names]
     # count for each ROI (column) how many rows had higher values than the first row
-    # divide by number of rows of comparison_df -1 (nb folds without counting h1 / fold 0)
+    # divide by number of rows of comparison_df -1 (nb folds without counting h1)
     pvalues = comparison_df.sum(axis=0) / (len(comparison_df) - 1)
 
-    # append as pvalues a new row
+    # Append uncorrected p-values as a new row
     pvalues_row = pvalues.to_frame().T  # convert to single-row DataFrame
     pvalues_row.insert(0, "fold", "pvalues") # add "pvalues" to "fold" column
     shap_expanded_df = pd.concat([shap_expanded_df, pvalues_row], ignore_index=True)
 
+    # --- Compute max SHAP across ROIs for each permutation (needed for maxT correction) ---
+    # Skip the h1 row (fold 0), only consider folds 1 to 1000
     shap_expanded_df["row_max"] = shap_expanded_df[roi_names].max(axis=1)
-    # last row is "pvalues" and we don't need the max value of the pvalues so we set it to NaN
-    shap_expanded_df.loc[shap_expanded_df.index[-1], "row_max"] = np.nan
-    # likewise, we don't need the max for h1 (first row), so we set the value to NaN
-    shap_expanded_df.loc[shap_expanded_df.index[0], "row_max"] = np.nan
+    shap_expanded_df.loc[shap_expanded_df["fold"] == "pvalues", "row_max"] # Don't use pvalues row
+    shap_expanded_df.loc[shap_expanded_df["fold"] == 0, "row_max"] = np.nan # Don't use h1 row
 
+    row_max_values = shap_expanded_df.loc[1:1000, "row_max"].values  # max across ROIs for each permutation
 
-    row_h1_values = shap_expanded_df.iloc[0][roi_names]
-    count_max_higher_than_h1 = []
-    row_max_values = shap_expanded_df.loc[1:1000, "row_max"].values
-
-    # loop over each ROI column
+    # --- Westfall & Young maxT-corrected p-values ---
+    corrected_pvals = []
     for roi in roi_names:
-        # count how many "row_max" values are greater than the mean abs shap value for this ROI under h1
-        count_higher = (row_max_values > row_h1_values[roi]).sum()
-        # divide the count by 1000 and append the result
-        count_max_higher_than_h1.append(count_higher / 1000)
+        h1_val = row_h1_values[roi]
+        # Count how many times the max SHAP across ROIs (under permutations) exceeds h1 SHAP for this ROI
+        p_corr = (row_max_values > h1_val).sum() / len(row_max_values)
+        corrected_pvals.append(p_corr)
 
-    # create a  new row with the computed corrected p-values and add it to df
-    # add "corrected_pvalues" for fold column and np.nan for row_max column value
-    pvalues_corrected =  ["corrected_pvalues"]+ count_max_higher_than_h1 + [np.nan]  
+    # Add corrected p-values row
+    pvalues_corrected = ["corrected_pvalues"] + corrected_pvals + [np.nan]
     pvalues_corrected_df = pd.DataFrame([pvalues_corrected], columns=shap_expanded_df.columns)
-    shap_expanded_df = pd.concat([shap_expanded_df, pvalues_corrected_df])
-    shap_expanded_df.reset_index(drop=True, inplace=True)
+    shap_expanded_df = pd.concat([shap_expanded_df, pvalues_corrected_df], ignore_index=True)
 
-    # select p-values row , and pvalues corrected row
-    # Get the row where p-values are stored
-    pvalues_row = shap_expanded_df[shap_expanded_df["fold"]=="pvalues"].iloc[0]
-    pvalues_corrected_row = shap_expanded_df[shap_expanded_df["fold"]=="corrected_pvalues"].iloc[0]
+    # --- Extract and report significant ROIs ---
+    pvalues_row = shap_expanded_df[shap_expanded_df["fold"] == "pvalues"].iloc[0]
+    pvalues_corrected_row = shap_expanded_df[shap_expanded_df["fold"] == "corrected_pvalues"].iloc[0]
 
-    # select ROIs with pvalues < alpha (all columns except 'fold')
-    uncorrected_significant_roi = [col for col in roi_names if pvalues_row[col] < alpha]
-    corrected_significant_roi = [col for col in roi_names if pvalues_corrected_row[col] < alpha]
+    uncorrected_significant_roi = [roi for roi in roi_names if pvalues_row[roi] < alpha]
+    corrected_significant_roi = [roi for roi in roi_names if pvalues_corrected_row[roi] < alpha]
 
-    print("uncorrected_significant_roi", uncorrected_significant_roi," \nthere are ", len(uncorrected_significant_roi), " uncorrected significant roi.")
-    print("\ncorrected_significant_roi", corrected_significant_roi," \nthere are ", len(corrected_significant_roi), " corrected significant roi.\n")
+    print("Uncorrected significant ROIs:", uncorrected_significant_roi, 
+        f"\nTotal: {len(uncorrected_significant_roi)}")
+
+    print("\nCorrected significant ROIs:", corrected_significant_roi, 
+        f"\nTotal: {len(corrected_significant_roi)}")
+
     shap_signficiant_ROI = shap_expanded_df[["fold"]+uncorrected_significant_roi]
     shap_signficiant_ROI = shap_signficiant_ROI[shap_signficiant_ROI["fold"].isin([0,"pvalues","corrected_pvalues"])]
     shap_signficiant_ROI.reset_index(drop=True, inplace=True)
@@ -174,8 +171,10 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     sorted_cols = shap_signficiant_ROI.iloc[0, 1:].sort_values(ascending=False).index.tolist()
     shap_signficiant_ROI = shap_signficiant_ROI[[first_col] + sorted_cols]
     shap_signficiant_ROI[corrected_significant_roi] = shap_signficiant_ROI[corrected_significant_roi].applymap(lambda x: round(x, 4))
+    shap_signficiant_ROI.at[0, "fold"] = "mean_abs_shap"
 
     print(shap_signficiant_ROI)
+    quit()
 
     significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut.xlsx'
     # if file doesn't exist, save to excel
@@ -186,10 +185,9 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
         # rois = [roi for roi in rois if roi!="fold"]
         # roi_names = ["fold"]+[roi_names_map[val] for val in rois]
         # shap_signficiant_ROI.columns = roi_names
-        shap_signficiant_ROI.to_excel(significant_shap_file, index=False)
+        shap_signficiant_ROI.to_excel(significant_shap_file, index=False)    
     
-    
-    mean_abs_significant_uncorrected_shap_values = shap_signficiant_ROI[shap_signficiant_ROI["fold"] == 0].iloc[0]
+    mean_abs_significant_uncorrected_shap_values = shap_signficiant_ROI[shap_signficiant_ROI["fold"] == "mean_abs_shap"].iloc[0]
     roi_dict = {col: mean_abs_significant_uncorrected_shap_values[col] for col in shap_signficiant_ROI.columns if col != "fold"}
 
     # need to multiply by -1 ROI that appear to have opposite tendencies between shap values and feature value
@@ -248,7 +246,7 @@ def plot_beeswarm(nb_permutations=1000, only_significant=False):
 
 def main():
     # plot_beeswarm()
-    get_pvalues(glassbrain=True)
+    get_pvalues(glassbrain=False)
 
 if __name__ == "__main__":
     main()

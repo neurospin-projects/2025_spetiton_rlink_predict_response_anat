@@ -1,7 +1,6 @@
 import sys, numpy as np, pandas as pd, pickle
 from sklearn import svm
 import time
-import xml.etree.ElementTree as ET
 import sklearn.linear_model as lm
 from xgboost import XGBClassifier 
 from sklearn.neural_network import MLPClassifier
@@ -12,11 +11,12 @@ from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, recall_score
 from sklearn.model_selection import StratifiedKFold
-from create_dataframe_ROIs import get_rois
 import matplotlib.pyplot as plt
+from plots import plot_glassbrain
+from utils import get_scaled_data
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer
-from utils import read_pkl, save_pkl, rename_col
+from utils import read_pkl, save_pkl, rename_col , get_rois
 
 # inputs
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
@@ -435,7 +435,8 @@ def classif_stacking():
 
 def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
-                      classif_from_concat=False,classif_from_m3=False, seed_label_permutations=42):
+                      classif_from_concat=False, classif_from_m3=False, seed_label_permutations=42, classif_from_WM_ROI = False, \
+                        biomarkers_roi=False, classif_from_17_roi=False):
     
     
     """
@@ -445,15 +446,19 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     classif_from_concat (bool): True if classifying from the concatenation of m0 and m3-m0 features
     classif_from_differencem3m0 (bool) : True if classifying from the difference m3-m0
     classif_from_m3 (bool) : True if classifying from m3 ROI
+    classif_from_WM_ROI (bool): True if classifying from white matter ROI VBM measures (instead of GM + CSF) 
     """
     
     str_labels="_GRvsPaRNR"
     print("seed_label_permutations ",seed_label_permutations)
 
-    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
-    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv")
+    str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
+
+    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+".csv")
+    
+    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+".csv")
     if classif_from_concat: # 91 subjects
-        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site.csv")
+        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+".csv")
         df_ROI_age_sex_site_baseline = df_ROI_age_sex_site.copy()
         merged = df_ROI_age_sex_site_baseline.merge(df_ROI_age_sex_site_differences, on="participant_id", suffixes=('_m0', '_dif'))
         for col in ["age", "sex", "site", "y"]:
@@ -462,7 +467,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         merged = merged.rename(columns={f"{col}_m0": col for col in ["age", "sex", "site", "y"]})
         df_ROI_age_sex_site = merged.copy()
     if classif_from_m3:
-        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_M00_M03.csv")
+        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_M00_M03"+str_WM+".csv")
         df_ROI_age_sex_site = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"]
         df_ROI_age_sex_site = df_ROI_age_sex_site.drop(columns=["session"])
 
@@ -510,9 +515,21 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
 
 
     if classif_from_concat: 
-        X_arr= df_ROI_age_sex_site[[col for col in df_ROI_age_sex_site.columns if any(col.startswith(roi) and (col.endswith('_dif') or col.endswith('_m0')) for roi in get_rois())]].values
+        X_arr= df_ROI_age_sex_site[[col for col in df_ROI_age_sex_site.columns if any(col.startswith(roi) and (col.endswith('_dif') or col.endswith('_m0')) \
+                                                                                      for roi in get_rois(WM=classif_from_WM_ROI))]].values
     else : 
-        X_arr = df_ROI_age_sex_site[get_rois()].values 
+        four_rois = ["Left Hippocampus", "Right Hippocampus","Right Amygdala", "Left Amygdala"]
+        four_rois = [roi+"_GM_Vol" for roi in four_rois]
+        if biomarkers_roi : 
+            assert not classif_from_WM_ROI,"WM prediction with 4 biomarker ROIs not implemented."
+            X_arr = df_ROI_age_sex_site[four_rois].values 
+        if classif_from_17_roi: 
+            assert not classif_from_WM_ROI,"WM prediction with 17 ROIs not implemented."
+            significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+            significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
+            X_arr = df_ROI_age_sex_site[significant_rois].values 
+        else : X_arr = df_ROI_age_sex_site[get_rois(WM=classif_from_WM_ROI)].values 
+
     y_arr = df_ROI_age_sex_site["y"].values
 
     if verbose:
@@ -549,10 +566,14 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         if classif_from_m3: str_diff="_m3"
         else: str_diff = ""
 
+    str_rois = ""
+    if classif_from_17_roi : str_rois = "_17rois_only" 
+    if biomarkers_roi : str_rois="_bilateralHippo_and_Amyg_only"
+
     if save_results :
         if not df_results.empty: 
-            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+'.pkl')
-            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+'.pkl')
+            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
+            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
 
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
@@ -571,18 +592,20 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         df_shap_svm.rename(columns={"index": "fold"}, inplace=True)
         print("df_shap_svm:\n",df_shap_svm)
 
+    
     if save_results :
         if not df_coeffsL2LR.empty : 
-            df_coeffsL2LR.to_pickle(ROOT+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+'.pkl')
-        if dict_cv_subjects : 
-            save_pkl(dict_cv_subjects,ROOT+'subjects_by_fold/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_seed_'+str(seed)+str_diff+".pkl")
+            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
+        # if dict_cv_subjects : 
+        #     save_pkl(dict_cv_subjects,ROOT+'subjects_by_fold/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_seed_'+str(seed)+str_diff+str_WM+str_rois+".pkl")
+    
 
     if compute_and_save_shap and not df_shap_svm.empty : 
         if random_permutation: 
             df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold_random_permutations_with_seed_"+\
-                                  str(seed_label_permutations)+"_of_labels"+str_diff+".pkl")
+                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+".pkl")
         else : 
-            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold"+str_diff+".pkl")
+            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+".pkl")
 
     if verbose :
         print("residualization age+sex+site mean roc auc and std :",round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].mean(),4),\
@@ -675,11 +698,11 @@ def print_recall_multiclass(df, residualization_type="no_res"):
     print("overall recall")
     print(round(df[df["residualization"]==residualization_type].groupby("classifier")["overall_recall_te"].mean(),4))
 
-def print_results(metric="roc_auc",classif_from_differencem3m0=False):
+def print_results(metric="roc_auc",classif_from_differencem3m0=False, PLSregression=False,classif_from_17rois=False):
     assert metric in ["roc_auc","balanced_accuracy"]
     file = "results_classification_seed_1_GRvsParNR_5fold.pkl"
-
     if classif_from_differencem3m0: file="results_classification_seed_1_GRvsPaRNR_5fold_differencem_m3m0.pkl"
+    if classif_from_17rois : file='results_classification_seed_1_GRvsPaRNR_5fold_17rois_only.pkl'
 
     with open(RESULTS_DIR+file, "rb") as f:
         results=pickle.load(f)
@@ -749,10 +772,34 @@ def read_classif_PaR_from_GRvsNR_models():
     get_results(classif_PaR_total, res="res_age_sex_site")
 
 
-def pls_regression(nb_components=3, specific_roi=None, \
+def matrice_corr_biomarkers_rois():
+    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
+    df_ROI_age_sex_site["y"] = df_ROI_age_sex_site["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
+    df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
+    four_rois = ["Left Hippocampus", "Right Hippocampus","Right Amygdala", "Left Amygdala"]
+    four_rois = [roi+"_GM_Vol" for roi in four_rois]
+    
+    df_rois = get_scaled_data(res="res_age_sex_site")
+    df_rois=df_rois[four_rois]
+    print(df_rois)
+    # compute correlation matrix
+    corr_matrix = df_rois.corr()
+
+    # plot
+    import seaborn as sns
+    plt.figure(figsize=(6, 4))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title("Correlation Matrix")
+    plt.tight_layout()
+    plt.show()
+
+def pls_regression(nb_components=3, significant_rois=None, \
                    nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
-                   compute_shap=False, classif_from_differencem3m0=False, classif_from_concat=False,classif_from_m3=False):
+                   classif_from_differencem3m0=False, classif_from_concat=False,classif_from_m3=False):
     """
+    nb_components (int): number of components for PLS regression
+    significant_rois (list): list of ROIs that going to be used for regression
+
     print_pvals (bool) : whether to print p-values describing the classification significativity
     compute_shap (bool): whether to compute SHAP values
     random_permutation (bool) : random permtutation of labels for training (used to establish a null hypothesis for SHAP values)
@@ -796,10 +843,10 @@ def pls_regression(nb_components=3, specific_roi=None, \
     }
 
     if classif_from_concat: 
-        if specific_roi : quit() # not implemented
+        if significant_rois : quit() # not implemented
         X_arr= df_ROI_age_sex_site[[col for col in df_ROI_age_sex_site.columns if any(col.startswith(roi) and (col.endswith('_dif') or col.endswith('_m0')) for roi in get_rois())]].values
     else : 
-        if specific_roi : X_arr = df_ROI_age_sex_site[specific_roi].values
+        if significant_rois : X_arr = df_ROI_age_sex_site[significant_rois].values
         else : X_arr = df_ROI_age_sex_site[get_rois()].values 
     y_arr = df_ROI_age_sex_site["y"].values
 
@@ -862,9 +909,9 @@ def pls_regression(nb_components=3, specific_roi=None, \
             )
 
             pipeline.fit(X_train_res, y_train)
-            print(pipeline.named_steps['plsregression'])
             score_test = pipeline.predict(X_test_res)
             score_train = pipeline.predict(X_train_res)
+            X_test_scores = pipeline.transform(X_test_res, y_test)[0] # X test scores
                 
             # Metrics
             roc_auc_te = roc_auc_score(y_test, score_test)
@@ -875,7 +922,6 @@ def pls_regression(nb_components=3, specific_roi=None, \
                 list_auc_te.append(roc_auc_te)
                 list_auc_tr.append(roc_auc_tr)
 
-            print("score_test ",np.min(score_test), np.max(score_test))
             dict_cv[fold_idx][residual_key].append({
                 # add loadings !!!
                 "y_test": y_test,
@@ -884,12 +930,12 @@ def pls_regression(nb_components=3, specific_roi=None, \
                 "score_train": score_train,
                 "roc_auc_test": roc_auc_te,
                 "roc_auc_train": roc_auc_tr,
-                "loadings": pipeline.named_steps['plsregression'].x_loadings_
+                "loadings": pipeline.named_steps['plsregression'].x_loadings_,
+                "X_test_scores": X_test_scores
             })
 
 
     # print(dict_cv_subjects,"\n\n")
-    print(list_auc_te)
     records = []
     for fold_idx, fold_data in dict_cv.items():
         for residual_key, result_list in fold_data.items():
@@ -900,7 +946,50 @@ def pls_regression(nb_components=3, specific_roi=None, \
                 records.append(record)
 
     df_results = pd.DataFrame(records)
-    # print(df_results)
+    print(df_results)
+    str_significant="_from_significant_ROI" if significant_rois else ""
+    if save_results :
+        if not df_results.empty: 
+            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold_PLSregression'+str_significant+'.pkl')
+            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold_PLSregression'+str_significant+'.pkl')
+    df_results_no_res = df_results[df_results["residualization"]=="no_res"]
+    df_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
+    df_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
+    print("no res ",df_results_no_res["roc_auc_test"].mean()," ",df_results_no_res["roc_auc_test"].std())
+    print("res age sex ",df_results_res_age_sex["roc_auc_test"].mean()," ",df_results_res_age_sex["roc_auc_test"].std())
+    print("res age sex site ",df_results_res_age_sex_site["roc_auc_test"].mean()," ",df_results_res_age_sex_site["roc_auc_test"].std())
+
+    if print_pvals:
+        # Group by residualization and classifier
+        results_pvals = {}
+        if verbose : print("\n\n")
+
+        for residualization in ["no_res","res_age_sex","res_age_sex_site"]:
+            # Concatenate score_test and y_test arrays for all folds
+            group = df_results[df_results["residualization"]==residualization]
+            score_test_concatenated = np.concatenate(group['score_test'].values, axis=0)
+            ytest_concatenated = np.concatenate(group['y_test'].values, axis=0)
+            
+            # Perform the Mann-Whitney U test
+            group_nr = score_test_concatenated[ytest_concatenated == 0]
+            group_gr = score_test_concatenated[ytest_concatenated == 1]
+            
+            if len(group_nr) > 0 and len(group_gr) > 0:
+                pvalue = scipy.stats.mannwhitneyu(group_nr, group_gr).pvalue
+            else:
+                pvalue = None  # Handle cases with no data for either group
+            
+            # Store the results
+            results_pvals[residualization] = pvalue
+
+        # Convert results to a DataFrame for easier visualization
+        results_pvals_df = pd.DataFrame([
+            {'residualization': key[0], 'pvalue': value}
+            for key, value in results_pvals.items()
+        ])
+
+        if verbose: print(results_pvals_df)
+
     return list_auc_tr, list_auc_te, df_results
     
 
@@ -910,21 +999,20 @@ def pls_regression(nb_components=3, specific_roi=None, \
     #     if classif_from_m3: str_diff="_m3"
     #     else: str_diff = ""
 
-    # # if save_results :
-    # #     if not df_results.empty: 
-    # #         df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+'.pkl')
-    # #         print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+'.pkl')
 
     # filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     # filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
     # filtered_results_nores = df_results[df_results["residualization"]=="no_res"]
     # print(filtered_results_res_age_sex_site)
 
-def find_best_number_of_components_pls_reg(specific_roi=None, plot=True):
+def find_best_number_of_components_pls_reg(significant_rois=None, plot=True):
+    significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+    significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
+
     component_range = range(1, 11)  # Trying components from 1 to 10
     mean_auc_te_scores = []
     for n in component_range:
-        _ , list_auc_te, _ = pls_regression(nb_components=n, specific_roi=specific_roi)
+        _ , list_auc_te, _ = pls_regression(nb_components=n, significant_rois=significant_rois)
         mean_auc_te_scores.append(np.mean(list_auc_te))
 
     # Find best number of components
@@ -937,33 +1025,55 @@ def find_best_number_of_components_pls_reg(specific_roi=None, plot=True):
         plt.plot(component_range, mean_auc_te_scores, marker='o')
         plt.xlabel('Number of PLS components')
         plt.ylabel('Mean ROC AUC (5-fold CV)')
-        # if specific_ROI: plt.title('PLS Regression: Component Selection with Specific ROIs')
+        # if significant_rois: plt.title('PLS Regression: Component Selection with Specific ROIs')
         plt.title('PLS Regression: Component Selection with all ROIs')
         plt.grid(True)
         plt.show()
 
-def plot_mean_loadings_over_CV_folds(df_results, specific_roi, res="res_age_sex_site",plot=False, glassbrains=True, nb_components=2): 
+def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_sex_site", plot=False, glassbrains=True, nb_components=2): 
     assert res in ["res_age_sex_site","res_age_sex","no_res"]
     filtered_results = df_results[df_results["residualization"]==res]
     # Stack all CV folds loadings vertically:
     loadings = filtered_results["loadings"]
-    arrays = np.array([loadings.iloc[i] for i in range(len(loadings))])
+    y_train = filtered_results["y_train"]
+    X_test_scores = filtered_results["X_test_scores"]
+    print(X_test_scores)
+    print("y_train", np.shape(y_train))
+    print("y_train", np.shape(y_train[0]))
+    print("X_test_scores ",X_test_scores)
 
-    print("arrays ",np.shape(arrays), type(arrays))
+    arrays_loadings = np.array([loadings.iloc[i] for i in range(len(loadings))])
+    arrays_scores = np.array([X_test_scores.iloc[i] for i in range(len(X_test_scores))])
+    for i in range(5):
+        print("arrays scores",np.shape(arrays_scores[i]), type(arrays_scores[i]))
+    arrays_scores = np.vstack(arrays_scores)
+ 
+    print("arrays loadings",np.shape(arrays_loadings), type(arrays_loadings))
+    print("arrays scores",np.shape(arrays_scores), type(arrays_scores))
+    quit()
 
     # Compute the mean of loadings for each component across all test set subjects of the 5 CV folds axis 0:
-    mean_loadings = np.mean(arrays, axis=0)
+    mean_loadings = np.mean(arrays_loadings, axis=0)
+    mean_scores = np.mean(arrays_scores, axis=0)
     print("mean_loadings ", np.shape(mean_loadings), type(mean_loadings))
-    std_loadings = np.std(arrays, axis=0)
+    print("mean_scores ", np.shape(mean_scores), type(mean_scores))
+    quit()
+
+    std_loadings = np.std(arrays_loadings, axis=0)
     print("std_loadings ", np.shape(std_loadings), type(std_loadings))
 
-    atlas_df = pd.read_csv(ROOT+"data/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    atlas_df = pd.read_csv(DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
     dict_atlas_roi_names = atlas_df.set_index('ROI_Neuromorphometrics_labels')['ROIname'].to_dict()
-    feature_names = [rename_col(col, dict_atlas_roi_names) for col in specific_roi]
+    feature_names = [rename_col(col, dict_atlas_roi_names) for col in significant_rois]
+    print(significant_rois)
+    print(feature_names)
+    
     loadings_df = pd.DataFrame(mean_loadings, index=feature_names, columns=["Comp "+str(i+1) for i in range(nb_components)]) # dataframe for mean loadings
     std_df = pd.DataFrame(std_loadings, index=feature_names, columns=["Comp "+str(i+1) for i in range(nb_components)])
 
     print(loadings_df)
+    quit()
+
     if plot:
         # Plot features' loadings for each component
         top_features = loadings_df.abs().sum(axis=1).sort_values(ascending=False).index #head(20).index
@@ -980,29 +1090,67 @@ def plot_mean_loadings_over_CV_folds(df_results, specific_roi, res="res_age_sex_
         plt.show()
 
     if glassbrains: 
-        from plots import plot_glassbrain_general
-        feature_names_csf = [ roi for roi in feature_names if roi.endswith(" CSF")]
+        feature_names_csf = [roi for roi in feature_names if roi.endswith(" CSF")]
         # negate CSF ROI loadings for interpretability
         print(loadings_df)
         loadings_df.loc[feature_names_csf] = -1*loadings_df.loc[feature_names_csf]
         print(loadings_df)
         for comp_nb in range(0, nb_components):
             loadings_one_component = {idx.rsplit(' ', 1)[0]: row['Comp '+str(comp_nb+1)] for idx, row in loadings_df.iterrows()}
-            plot_glassbrain_general(dict_plot=loadings_one_component, title="loadings of PLS component "+str(comp_nb+1))
+            plot_glassbrain(dict_plot=loadings_one_component, title="loadings of PLS component "+str(comp_nb+1))
 
-def print_roc_auc_by_residualization_scheme(df_results):
+def print_roc_auc_by_residualization_scheme(df_results, metric="roc_auc"):
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
     filtered_results_nores = df_results[df_results["residualization"]=="no_res"]
+
     print("res age sex site")
-    print(round(filtered_results_res_age_sex_site["roc_auc_test"].mean(),4))
-    print(round(filtered_results_res_age_sex_site["roc_auc_test"].std(),4))
+    print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].mean(),4))
+    print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].std(),4))
     print("res age sex ")
-    print(round(filtered_results_res_age_sex["roc_auc_test"].mean(),4))
-    print(round(filtered_results_res_age_sex["roc_auc_test"].std(),4))
+    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].mean(),4))
+    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].std(),4))
     print("no res")
-    print(round(filtered_results_nores["roc_auc_test"].mean(),4))
-    print(round(filtered_results_nores["roc_auc_test"].std(),4))
+    print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].mean(),4))
+    print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].std(),4))
+
+def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_differencem3m0=False,\
+                      classif_from_concat=False, classif_from_m3=False, biomarkers_roi=False, classif_from_17_roi=False):
+    tr_labels="_GRvsPaRNR"
+    if classif_from_differencem3m0: str_diff="_difference_m3m0"
+    else: 
+        if classif_from_concat: str_diff="_concat_dif_with_baseline"
+        if classif_from_m3: str_diff="_m3"
+        else: str_diff = ""
+    str_rois = ""
+    if classif_from_17_roi : str_rois = "_17rois_only" 
+    if biomarkers_roi : str_rois="_bilateralHippo_and_Amyg_only"
+
+    str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
+    weights_file = RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+"_GRvsPaRNR"+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl'
+    if os.path.exists(weights_file):
+        data = read_pkl(weights_file)
+    else :
+        print("No file at ",weights_file)
+        quit()
+    data=data["res_age_sex_site"]
+    print(data)
+    data = data.values
+    data = np.vstack(data)
+    print(np.shape(data), type(data))
+
+    mean_weights_over_folds = np.mean(data,axis=0)
+
+    print(np.shape(mean_weights_over_folds), type(mean_weights_over_folds))
+    four_rois = ["Left Hippocampus", "Right Hippocampus","Right Amygdala", "Left Amygdala"]
+    four_rois = [roi+"_GM_Vol" for roi in four_rois]
+    significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+    significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
+    dict_weights = dict(zip(significant_rois, mean_weights_over_folds))
+    print(dict_weights)
+    plot_glassbrain(dict_plot=dict_weights, title="mean L2LR weights over 5 CV folds")
+    
+
 
 def main():
     """
@@ -1010,8 +1158,23 @@ def main():
     1. find ideal nb of components using all ROIs 
     2. 
     """
+    matrice_corr_biomarkers_rois()
+    quit()
 
-    classification(compute_and_save_shap=True, random_permutation=False)
+    # classification(save_results=True, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=True, print_pvals=True)
+    # quit()
+    # plot_L2LR_weights(classif_from_17_roi=True)
+    # quit()
+    
+    significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+    significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
+    _, _, df_results = pls_regression(nb_components=2, significant_rois=significant_rois, \
+                   nbfolds= 5, print_pvals=True, save_results=True)
+    plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_sex_site", plot=False, glassbrains=True, nb_components=2)
+    quit()
+    df = read_pkl("reports/classification_results/results_classification_seed_1_GRvsPaRNR_5fold_bilateralHippo_and_Amyg_only.pkl")
+    print_roc_auc_by_residualization_scheme(df, metric="balanced_accuracy")
+    # 
 
     """
     start_time = time.time()
