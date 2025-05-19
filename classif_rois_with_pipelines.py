@@ -771,27 +771,59 @@ def read_classif_PaR_from_GRvsNR_models():
     print("AGE SEX SITE residualization ")
     get_results(classif_PaR_total, res="res_age_sex_site")
 
-
-def matrice_corr_biomarkers_rois():
+def matrice_corr_biomarkers_rois(significant_17rois=False, display_plot=False, clustering=True):
     df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
     df_ROI_age_sex_site["y"] = df_ROI_age_sex_site["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
     df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
     four_rois = ["Left Hippocampus", "Right Hippocampus","Right Amygdala", "Left Amygdala"]
     four_rois = [roi+"_GM_Vol" for roi in four_rois]
+    significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+    significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
     
     df_rois = get_scaled_data(res="res_age_sex_site")
-    df_rois=df_rois[four_rois]
+    if significant_17rois: df_rois=df_rois[significant_rois]
+    else : df_rois=df_rois[four_rois]
+
+    atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
+    roi_names = [roi_names_map[val] for val in list(df_rois.columns)]
+    df_rois.columns = roi_names
     print(df_rois)
+
     # compute correlation matrix
     corr_matrix = df_rois.corr()
 
-    # plot
-    import seaborn as sns
-    plt.figure(figsize=(6, 4))
-    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
-    plt.title("Correlation Matrix")
-    plt.tight_layout()
-    plt.show()
+    if display_plot:
+        import seaborn as sns
+        plt.figure(figsize=(6, 4))
+        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+        plt.title("Correlation Matrix")
+        plt.xticks(rotation=45, ha='right') 
+        plt.tight_layout()
+        plt.show()
+    
+    if clustering and significant_17rois: # no clustering on 4 ROIs 
+        import scipy.cluster.hierarchy as sch
+        from scipy.spatial.distance import squareform
+        # convert correlation to distance (1 - correlation)
+        dist_matrix = 1 - corr_matrix
+        dist_condensed = squareform(dist_matrix.values)
+        # hierarchical clustering
+        linkage_matrix = sch.linkage(dist_condensed, method='ward') 
+
+        plt.figure(figsize=(8, 4))
+        max_d = linkage_matrix[-4 + 1, 2]
+        sch.dendrogram(linkage_matrix, labels=corr_matrix.columns, color_threshold=max_d)
+        plt.title("Hierarchical Clustering Dendrogram")
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.show()
+        from scipy.cluster.hierarchy import fcluster
+        cluster_labels = fcluster(linkage_matrix, t=4, criterion='maxclust')
+
+        # Optional: assign clusters to variables
+        cluster_assignments = dict(zip(corr_matrix.columns, cluster_labels))
+        print(cluster_assignments)
 
 def pls_regression(nb_components=3, significant_rois=None, \
                    nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
@@ -849,6 +881,7 @@ def pls_regression(nb_components=3, significant_rois=None, \
         if significant_rois : X_arr = df_ROI_age_sex_site[significant_rois].values
         else : X_arr = df_ROI_age_sex_site[get_rois()].values 
     y_arr = df_ROI_age_sex_site["y"].values
+    subjects_list = df_ROI_age_sex_site["participant_id"].values
 
     if verbose:
         print("np.shape(X)",np.shape(X_arr), type(X_arr)) 
@@ -879,13 +912,11 @@ def pls_regression(nb_components=3, significant_rois=None, \
         # Split data
         X_train, X_test = X_arr[train_index], X_arr[test_index]
         y_train, y_test = y_arr[train_index], y_arr[test_index]
+        test_subjects = subjects_list[test_index]
         # print("\n",df.loc[train_index])
         # print("\n",df.loc[test_index])
 
-        dict_cv_subjects[fold_idx]={"train_subjects_indices":train_index, "test_subjects_indices":test_index, \
-                                    "train_subjects_ids":df_ROI_age_sex_site["participant_id"].loc[train_index].values, \
-                                        "test_subjects_ids":df_ROI_age_sex_site["participant_id"].loc[test_index].values}
-
+        
         for residual_key, formula in residualization_configs.items():
             if formula:
                 print(f"Residualizing with: {formula}")
@@ -911,7 +942,7 @@ def pls_regression(nb_components=3, significant_rois=None, \
             pipeline.fit(X_train_res, y_train)
             score_test = pipeline.predict(X_test_res)
             score_train = pipeline.predict(X_train_res)
-            X_test_scores = pipeline.transform(X_test_res, y_test)[0] # X test scores
+            X_test_scores = pipeline.transform(X_test_res) # X test scores
                 
             # Metrics
             roc_auc_te = roc_auc_score(y_test, score_test)
@@ -931,11 +962,11 @@ def pls_regression(nb_components=3, significant_rois=None, \
                 "roc_auc_test": roc_auc_te,
                 "roc_auc_train": roc_auc_tr,
                 "loadings": pipeline.named_steps['plsregression'].x_loadings_,
-                "X_test_scores": X_test_scores
+                "X_test_scores": X_test_scores,
+                "test_subjects" : test_subjects
             })
 
 
-    # print(dict_cv_subjects,"\n\n")
     records = []
     for fold_idx, fold_data in dict_cv.items():
         for residual_key, result_list in fold_data.items():
@@ -1030,60 +1061,89 @@ def find_best_number_of_components_pls_reg(significant_rois=None, plot=True):
         plt.grid(True)
         plt.show()
 
-def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_sex_site", plot=False, glassbrains=True, nb_components=2): 
-    assert res in ["res_age_sex_site","res_age_sex","no_res"]
+def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_sex_site", plot=False, glassbrains=True, \
+    nb_components=2, jointplot=False): 
+    assert jointplot and nb_components>=2,"Cannot plot jointplot with less than 2 axes (2 components)."
+    assert res in ["res_age_sex_site","res_age_sex","no_res"],"incorrect residualization scheme"
     filtered_results = df_results[df_results["residualization"]==res]
-    # Stack all CV folds loadings vertically:
-    loadings = filtered_results["loadings"]
-    y_train = filtered_results["y_train"]
-    X_test_scores = filtered_results["X_test_scores"]
-    print(X_test_scores)
-    print("y_train", np.shape(y_train))
-    print("y_train", np.shape(y_train[0]))
-    print("X_test_scores ",X_test_scores)
 
-    arrays_loadings = np.array([loadings.iloc[i] for i in range(len(loadings))])
-    arrays_scores = np.array([X_test_scores.iloc[i] for i in range(len(X_test_scores))])
-    for i in range(5):
-        print("arrays scores",np.shape(arrays_scores[i]), type(arrays_scores[i]))
-    arrays_scores = np.vstack(arrays_scores)
- 
-    print("arrays loadings",np.shape(arrays_loadings), type(arrays_loadings))
-    print("arrays scores",np.shape(arrays_scores), type(arrays_scores))
-    quit()
+    y_test = np.concatenate(filtered_results["y_test"].values,axis=0)
+    X_test_scores = np.concatenate(filtered_results["X_test_scores"].values,axis=0)
+    y_pred_te = np.concatenate(filtered_results["score_test"].values,axis=0)
+    loadings = np.array(filtered_results["loadings"].values.tolist()) 
+    test_subjects = np.concatenate(filtered_results["test_subjects"].values, axis=0)
+    print("test_subjects ",test_subjects, " \n", np.shape(test_subjects))
 
     # Compute the mean of loadings for each component across all test set subjects of the 5 CV folds axis 0:
-    mean_loadings = np.mean(arrays_loadings, axis=0)
-    mean_scores = np.mean(arrays_scores, axis=0)
-    print("mean_loadings ", np.shape(mean_loadings), type(mean_loadings))
-    print("mean_scores ", np.shape(mean_scores), type(mean_scores))
-    quit()
-
-    std_loadings = np.std(arrays_loadings, axis=0)
-    print("std_loadings ", np.shape(std_loadings), type(std_loadings))
+    mean_loadings, std_loadings = np.mean(loadings, axis=0), np.std(loadings, axis=0)
 
     atlas_df = pd.read_csv(DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
     dict_atlas_roi_names = atlas_df.set_index('ROI_Neuromorphometrics_labels')['ROIname'].to_dict()
     feature_names = [rename_col(col, dict_atlas_roi_names) for col in significant_rois]
-    print(significant_rois)
-    print(feature_names)
     
     loadings_df = pd.DataFrame(mean_loadings, index=feature_names, columns=["Comp "+str(i+1) for i in range(nb_components)]) # dataframe for mean loadings
     std_df = pd.DataFrame(std_loadings, index=feature_names, columns=["Comp "+str(i+1) for i in range(nb_components)])
 
     print(loadings_df)
-    quit()
+    label_map = {0: "NR/PaR", 1: "GR"}
+    df_scores = pd.DataFrame({
+        "Comp1": X_test_scores[:, 0],
+        "Comp2": X_test_scores[:, 1],
+        "label": [label_map[label] for label in y_test]
+    })
+
+    if jointplot and nb_components>=2:
+        import seaborn as sns
+        rocauc1 = roc_auc_score(y_test, df_scores["Comp1"])
+        rocauc2 = roc_auc_score(y_test, df_scores["Comp2"])
+        roc_auc_overall = roc_auc_score(y_test, y_pred_te)  
+        print("performance metric on test data: \n,\
+            roc auc comp 1 ",rocauc1, " roc auc comp 2 ", rocauc2, " roc auc overall ", roc_auc_overall)
+        # idx_min = df_scores["Comp1"].idxmin()
+        # print("min is ",df_scores["Comp1"].iloc[idx_min])
+        # print("min is ",test_subjects[idx_min])
+        # print("true label : ", y_test[idx_min])
+        # print("prediction ", y_pred_te[idx_min])
+
+        # Create the jointplot
+        plt.figure(figsize=(8, 8))
+        g = sns.jointplot(
+            data=df_scores,
+            x="Comp1", y="Comp2",
+            hue="label",
+            kind="scatter",
+            marker='o',
+            s=100,
+            alpha=0.7,
+            palette="colorblind",
+            height=8
+        )
+
+        # Set axis labels with AUC
+        g.ax_joint.set_xlabel(f"PLS Component 1 (AUC={rocauc1:.2f})", fontsize=18)
+        g.ax_joint.set_ylabel(f"PLS Component 2 (AUC={rocauc2:.2f})", fontsize=18)
+
+        # Customize legend
+        legend = g.ax_joint.legend_
+        legend.set_title("Class", prop={'size': 16})
+        for text in legend.get_texts():
+            text.set_fontsize(14)
+
+        # Customize tick labels
+        g.ax_joint.tick_params(axis='both', labelsize=14)
+        g.figure.suptitle(f"PLS Component Scatter (Overall ROC AUC={roc_auc_overall:.2f})", y=0.98, fontsize=20)
+        plt.tight_layout()
+        plt.show()
 
     if plot:
         # Plot features' loadings for each component
-        top_features = loadings_df.abs().sum(axis=1).sort_values(ascending=False).index #head(20).index
-        # loadings_df.loc[top_features].plot(kind='bar', figsize=(10, 6), title='Feature Loadings by component')
-        ax = loadings_df.loc[top_features].plot(
+        features = loadings_df.abs().sum(axis=1).sort_values(ascending=False).index 
+        ax = loadings_df.loc[features].plot(
             kind='bar',
-            yerr=std_df.loc[top_features],
+            yerr=std_df.loc[features],
             figsize=(10, 6),
             title='Feature Loadings by Component',
-            capsize=4  # Adds a little cap to the error bars
+            capsize=4  # adds a cap to the error bars
         )
         plt.ylabel('Loading Magnitude')
         plt.tight_layout()
@@ -1092,9 +1152,7 @@ def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_
     if glassbrains: 
         feature_names_csf = [roi for roi in feature_names if roi.endswith(" CSF")]
         # negate CSF ROI loadings for interpretability
-        print(loadings_df)
         loadings_df.loc[feature_names_csf] = -1*loadings_df.loc[feature_names_csf]
-        print(loadings_df)
         for comp_nb in range(0, nb_components):
             loadings_one_component = {idx.rsplit(' ', 1)[0]: row['Comp '+str(comp_nb+1)] for idx, row in loadings_df.iterrows()}
             plot_glassbrain(dict_plot=loadings_one_component, title="loadings of PLS component "+str(comp_nb+1))
@@ -1146,35 +1204,54 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
     four_rois = [roi+"_GM_Vol" for roi in four_rois]
     significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
     significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
-    dict_weights = dict(zip(significant_rois, mean_weights_over_folds))
+    atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
+    if classif_from_17_roi: 
+        dict_weights = dict(zip(significant_rois, mean_weights_over_folds))
+        roi_names = [roi_names_map[val] for val in significant_rois]
+        key_mapping = dict(zip(significant_rois, roi_names))
+
+        
+    if biomarkers_roi: dict_weights = dict(zip(four_rois, mean_weights_over_folds))
+
+    # change sign of CSF volume ROIs
+    dict_weights = {key: dict_weights[key] * -1 if key.endswith("_CSF_Vol") else dict_weights[key] for key in dict_weights}
+    dict_weights_atlas_names = {key_mapping.get(k, k): v for k, v in dict_weights.items()}
+    for k,v in dict_weights_atlas_names.items():
+        print(k,"   ",round(v,4))
+
     print(dict_weights)
     plot_glassbrain(dict_plot=dict_weights, title="mean L2LR weights over 5 CV folds")
     
 
-
 def main():
-    """
-    pls reg 
-    1. find ideal nb of components using all ROIs 
-    2. 
-    """
-    matrice_corr_biomarkers_rois()
-    quit()
 
+    # to perform classification:
     # classification(save_results=True, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=True, print_pvals=True)
-    # quit()
-    # plot_L2LR_weights(classif_from_17_roi=True)
-    # quit()
+
+
+    # to plot the correlation matrix with selected rois:
+    # matrice_corr_biomarkers_rois(significant_17rois=True)
     
+    # to plot logistic regression weights with 17 rois:
+    # plot_L2LR_weights(classif_from_17_roi=True)
+
+
+    # to execute PLS regression with 17 ROIs selected with SHAP 
+    # and get the plots 
+    """
     significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
     significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
     _, _, df_results = pls_regression(nb_components=2, significant_rois=significant_rois, \
                    nbfolds= 5, print_pvals=True, save_results=True)
-    plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_sex_site", plot=False, glassbrains=True, nb_components=2)
-    quit()
+    plot_mean_loadings_over_CV_folds(df_results, significant_rois, plot=False, glassbrains=True, nb_components=2,\
+        jointplot=True)
+    """
+    # to print the classification results using only 4 rois: bilateral hippocampus and amygdala
+    """
     df = read_pkl("reports/classification_results/results_classification_seed_1_GRvsPaRNR_5fold_bilateralHippo_and_Amyg_only.pkl")
     print_roc_auc_by_residualization_scheme(df, metric="balanced_accuracy")
-    # 
+    """
 
     """
     start_time = time.time()
@@ -1197,8 +1274,6 @@ def main():
     all_rois = get_rois()
     specific_roi = [item for item in list(shap_stat[shap_stat.type=="specific"].ROI) if item in get_rois()]
     # find_best_number_of_components_pls_reg(specific_roi=specific_roi, plot=True)
-
-
     
     _,_, df_results = pls_regression(nb_components=2, specific_roi=specific_roi)
     print(df_results)
