@@ -1,6 +1,7 @@
 import nibabel
 import pandas as pd, numpy as np, re
 import nilearn.plotting as plotting
+from nilearn import image
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
@@ -14,15 +15,21 @@ def plot_glassbrain(dict_plot=None, title="", list_negative=None, neuromorphomet
     """
         Aim : plot glassbrain of specfic ROI from SHAP values obtained with an SVM-RBF and VBM ROI features
     """    
+    atlas_df = pd.read_csv(DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
 
     print("dict_plot\n")
+
     for k,v in dict_plot.items():
-        print(k, "  ",v)
+        print(k, "  ",round(v,4))
+
+    # keys = list(dict_plot.keys())
+    # matching_rows = atlas_df[atlas_df["ROI_Neuromorphometrics_labels"].isin(keys)]
+    # roi_names = matching_rows["ROIname"].tolist()
+    # print(roi_names)
 
     ref_im = nibabel.load(VOL_FILE_VBM)
     ref_arr = ref_im.get_fdata()
     # labels = sorted(set(np.unique(ref_arr).astype(int))- {0}) # 136 labels --> 'Left Inf Lat Vent', 'Right vessel', 'Left vessel' missing in data
-    atlas_df = pd.read_csv(DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
     texture_arr = np.zeros(ref_arr.shape, dtype=float)
     
     for name, val in dict_plot.items():
@@ -48,6 +55,32 @@ def plot_glassbrain(dict_plot=None, title="", list_negative=None, neuromorphomet
     vmax = np.max(texture_arr)
     print("vmin vmax texture arr", vmin,"     ",vmax)
     texture_im = nibabel.Nifti1Image(texture_arr, ref_im.affine)
+
+    # neg_data = np.where(texture_arr < 0, texture_arr, 0)
+    # pos_data = np.where(texture_arr > 0, texture_arr, 0)
+
+    # neg_img = image.new_img_like(texture_im, neg_data)
+    # pos_img = image.new_img_like(texture_im, pos_data)
+
+    # # Plot negative values first (blue)
+    # display = plotting.plot_glass_brain(
+    #     pos_img, cmap=cmap, colorbar=False, vmin=-7, vmax=7, symmetric_cbar=True,plot_abs=False ,display_mode="ortho",
+    #     alpha=0.6,threshold=0,title=title
+    # )
+    # # Overlay positive values second (red)
+    # display.add_overlay(
+    #     neg_img,
+    #     cmap=cmap,
+    #     threshold=0,
+    #     alpha=0.6
+    # )
+
+    # # if hasattr(display, "_colorbar_ax"): # to prevent the colorbar from being on the glassbrain
+    # #     display._colorbar_ax.set_position([0.95, 0.1, 0.015, 0.6])  # [left, bottom, width, height]
+
+    # plotting.show() 
+    # quit()
+
     if vmin==0:
         # if all values are positive, the color map should be a gradient from white (0) to red (max value)
         red_from_coolwarm = plt.cm.coolwarm(vmax)
@@ -60,7 +93,7 @@ def plot_glassbrain(dict_plot=None, title="", list_negative=None, neuromorphomet
         colorbar=True,
         cmap=cmap,
         plot_abs=False ,
-        alpha = 0.95 ,
+        alpha = 0.6 ,
         threshold=0,
         title=title)
     plotting.show() 

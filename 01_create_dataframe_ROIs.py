@@ -86,7 +86,7 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
 
     # 415 columns (longitudinal or not) because we have ['participant_id', 'session', 'run', 'tiv', 'CSF_Vol', 'GM_Vol', 'WM_Vol'] (len=7)
     # and 134 ROI for GM, WM, and CSF volumes => 402 (134*3)
-    # and Right vessel and Left vessel (which are in dfROI for GM and WM vand CSF olumes = 6 columns in dfROI) are not in Neuromorphometrics
+    # and Right vessel and Left vessel (which are in dfROI for GM and WM vand CSF volumes = 6 columns in dfROI) are not in Neuromorphometrics
     # 415 = 134*3 + 7 + 6
 
     # set tiv value to 1500.0 for all subjects and normalize roi values from all_rois list accordingly

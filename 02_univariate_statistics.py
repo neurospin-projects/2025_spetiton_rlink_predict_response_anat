@@ -273,7 +273,7 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
 
     t_col = f"{df_str}_t"
     p_col = f"{df_str}_pcor_bonferroni"
-    # print(stats_df.loc[stats_df[f"{df_str}_p"] < 0.05][["ROI", f"{df_str}_p",t_col, f"{df_str}_p_anova", f"{df_str}_pcor_bonferroni"]])
+    print(stats_df.loc[stats_df[f"{df_str}_p"] < 0.05][["ROI", f"{df_str}_p",t_col, f"{df_str}_pcor_bonferroni"]])
 
     filtered_sorted_stats = stats_df.loc[stats_df[p_col] < 0.05].copy()
     filtered_sorted_stats["abs_t"] = filtered_sorted_stats[t_col].abs()
@@ -285,8 +285,6 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
         print(f"Westfall and Young corrected p < 0.05:", (stats_df_with_tmax[f"{df_str}_pcor_Tmax"] < 0.05).sum())
         print("roi with Tmax corrected pvalue <0.05 : \n",\
             stats_df_with_tmax[stats_df_with_tmax[f"{df_str}_pcor_Tmax"] < 0.05][["ROI",f"{df_str}_t",f"{df_str}_p",f"{df_str}_pcor_Tmax"]])
-
-    quit()
 
     if not intercept_analysis:
         print("in order of highest to lowest absolute t statistic, the ROI with bonferroni corrected pvalues <0.05 are:\n",\
@@ -340,13 +338,13 @@ def get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=False, interc
     # print_roi_names_long(stats_df, p_col,df_str, t_col)
     if four_rois: stats_dict_tstat= {k:v for (k,v) in zip(stats_df_four_rois["ROI"].values, stats_df_four_rois[t_col].values)}
     else : stats_dict_tstat= {k:v for (k,v) in zip(stats_df["ROI"].values, stats_df[t_col].values)}
-    if not only_significant_roi and m3minusm0:
-        # in this case there are too many significant ROI and there's overlap btw the GM and CSF volumes
-        stats_dict_tstatGM = {k: v for k, v in stats_dict_tstat.items() if k.endswith("_GM_Vol")}
-        stats_dict_tstatCSF = {k: v for k, v in stats_dict_tstat.items() if k.endswith("_CSF_Vol")}
-    else : 
-        stats_dict_tstat = {k: v if k.endswith("_GM_Vol") else -v for k, v in stats_dict_tstat.items()}
-        print(stats_dict_tstat)
+    if not WM_roi : 
+        if not only_significant_roi and m3minusm0:
+            # in this case there are too many significant ROI and there's overlap btw the GM and CSF volumes
+            stats_dict_tstatGM = {k: v for k, v in stats_dict_tstat.items() if k.endswith("_GM_Vol")}
+            stats_dict_tstatCSF = {k: v for k, v in stats_dict_tstat.items() if k.endswith("_CSF_Vol")}
+        else : 
+            stats_dict_tstat = {k: v if k.endswith("_GM_Vol") else -v for k, v in stats_dict_tstat.items()}
     str_corr = "Bonferroni corrected" if (only_significant_roi and m0) or intercept_analysis else "uncorrected"
     m_str = "m0" if m0 else "m3-m0"
     if intercept_analysis: title = str_corr+" t-statistics of significant ROI associated with anatomical change : "+m_str+" ~ 1 + age + sex + site"
@@ -356,20 +354,25 @@ def get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=False, interc
         title = "t-statistics of bilateral hippocampus and amygdala associated with Li response : "+m_str+" ~ resp Li + age + sex + site"
 
     if not only_significant_roi and m3minusm0 and intercept_analysis: 
-        plot_glassbrain(dict_plot=stats_dict_tstatGM, title=title+ " GM")
-        plot_glassbrain(dict_plot=stats_dict_tstatCSF, title=title+ " CSF")
+        if WM_roi: plot_glassbrain(dict_plot=stats_dict_tstat, title=title+ " WM")
+        else: 
+            plot_glassbrain(dict_plot=stats_dict_tstatGM, title=title+ " GM")
+            plot_glassbrain(dict_plot=stats_dict_tstatCSF, title=title+ " CSF")
     else : plot_glassbrain(dict_plot=stats_dict_tstat, title=title)
 
 
 
 def main():
 
-    get_glass_brain_t_statistics(res="no_res", m0=True, m3minusm0=False, intercept_analysis=False, \
-                  WM_roi=False, only_significant_roi=True,  four_rois=False)
+    # perform_tests(res="no_res", save=True, m0=False, m3minusm0=True, include_site=True, intercept_analysis=False, WM_roi=True, only_significant_roi=False)
+
+    get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=True, intercept_analysis=False, \
+                  WM_roi=True, only_significant_roi=False,  four_rois=False)
+    quit()
 
     
 
-    perform_tests(res="no_res", save=False, m0=False, m3minusm0=True, include_site=True, intercept_analysis=True, WM_roi=False, only_significant_roi=True)
+    perform_tests(res="no_res", save=False, m0=False, m3minusm0=True, include_site=True, intercept_analysis=True, WM_roi=True, only_significant_roi=False)
 
     # perform_tests(res="no_res", save=False, m0=True, m3minusm0=False, include_site=True, intercept_analysis=False, WM_roi=True)
     quit()
