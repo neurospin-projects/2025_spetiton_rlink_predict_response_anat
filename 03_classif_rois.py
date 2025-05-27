@@ -1176,8 +1176,7 @@ def main():
     # to perform classification:
     # classification(save_results=True, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=True, print_pvals=True)
 
-    # to plot the correlation matrix with selected rois:
-    # matrice_corr_biomarkers_rois(significant_17rois=True)
+
     
     # to plot logistic regression weights with 17 rois:
     # plot_L2LR_weights(classif_from_17_roi=True)

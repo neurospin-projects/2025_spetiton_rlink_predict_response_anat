@@ -21,6 +21,25 @@ VBMLOOKUP_FILE = "/drf/local/spm12/tpm/labels_Neuromorphometrics.xml"
 ONE_SUBJECT_NIFTI = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long/sub-11327/ses-M00/mri/mwp1rusub-11327_ses-M00_acq-3DT1_rec-yBCyGC_run-1_T1w.nii"
 BRAIN_MASK_PATH = DATA_DIR+"mni_cerebrum-gm-mask_1.5mm.nii.gz"
 
+
+
+def scale_rois_with_tiv(dfROI, all_rois, target_tiv=1500.0):
+    """
+    aim : scaling the rois of a df of rois with total intracranial volume
+    
+    dfROI : pandas df of ROIs
+    all_rois: list of roi (columns of df) to be scaled using tiv
+    target_tiv: target total intracranial volume
+    """
+    assert "tiv" or "TIV" in list(dfROI.columns), "there should be a column 'tiv' in the dataframe"
+    if "tiv" in list(dfROI.columns):
+        scaling_factor = target_tiv / dfROI["tiv"]
+        dfROI[all_rois+["tiv"]] = dfROI[all_rois+["tiv"]].mul(scaling_factor, axis=0)
+    if "TIV" in list(dfROI.columns):
+        scaling_factor = target_tiv / dfROI["TIV"]
+        dfROI[all_rois+["TIV"]] = dfROI[all_rois+["TIV"]].mul(scaling_factor, axis=0)
+    return dfROI
+
 def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
     assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
 
