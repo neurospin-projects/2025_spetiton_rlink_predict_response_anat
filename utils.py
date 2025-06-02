@@ -1,4 +1,4 @@
-import pickle
+import pickle, os
 import pandas as pd, sys
 import numpy as np
 import nibabel
@@ -39,6 +39,11 @@ def scale_rois_with_tiv(dfROI, all_rois, target_tiv=1500.0):
         scaling_factor = target_tiv / dfROI["TIV"]
         dfROI[all_rois+["TIV"]] = dfROI[all_rois+["TIV"]].mul(scaling_factor, axis=0)
     return dfROI
+
+def create_folder_if_not_exists(folder_path):
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder '{folder_path}' created.")
 
 def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
     assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
