@@ -7,7 +7,7 @@ from utils import get_rois
 CLINICAL_DATA_DF_FILE = "/neurospin/rlink/participants.tsv"
 PATHROI = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_roi/neuromorphometrics_cat12_vbm_roi.tsv"
 PATHROI_LONG ="/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long_roi/neuromorphometrics_cat12_vbm_roi.tsv"
-RESPONSE_DATA_DF_FILE = "/neurospin/rlink/REF_DATABASE/phenotype/ecrf/dataset-outcome_version-3.tsv"
+RESPONSE_DATA_DF_FILE = "/neurospin/rlink/REF_DATABASE/phenotype/ecrf/dataset-outcome_version-4.tsv"
 QC_FILE = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_qc/qc.tsv"
 QC_LONG_FILE = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long_qc/qc.tsv"
 
@@ -15,7 +15,10 @@ QC_LONG_FILE = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
 RESULTS_DIR = ROOT+"reports/results_classif/"
 DATA_DIR = ROOT+"data/processed/"
+"""
+difference btw labels at v3 and v4: at m0, one unclassified subject has been classified GR 'sub-80793'
 
+"""
 
 
 def get_clinical_info(longitudinal, listparticipants):
@@ -115,7 +118,9 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
 
     # deal with the response to Li variable / include the labels for classification to the dfROI dataframe
     pop = pd.read_csv(RESPONSE_DATA_DF_FILE, sep='\t')
-    pop["participant_id"] = "sub-" + pop["participant_id"].astype(str)
+    
+    # pop["participant_id"] = "sub-" + pop["participant_id"].astype(str) # for v3 labels
+    pop["participant_id"] = pop["participant_id"].astype(str) # file of v4 labels already has "sub-" substring
     
     # column of population dataframe that defines response to Li label
     label = 'Response.Status.at.end.of.follow.up'
@@ -126,11 +131,12 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
         print("population df columns: ", list(pop.columns))
         print(pop[label].unique())
         print(dfROI_all_pop[label].unique())
-        print("in population dataframe: \nnumber of Good Responders (GR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="GR"].values))
-        print("number of Partial Responders (PaR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="PaR"].values))
-        print("number of Non Responders (NR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="NR"].values))
-        print("number of UnClassified (UC) :",len(dfROI_all_pop[dfROI_all_pop[label]=="UC"].values))
-
+        division=2 if longitudinal else 1 # twice the same participant in df for longitudinal df
+        print("in population dataframe: \nnumber of Good Responders (GR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="GR"].values)/division)
+        print("number of Partial Responders (PaR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="PaR"].values)/division)
+        print("number of Non Responders (NR) :",len(dfROI_all_pop[dfROI_all_pop[label]=="NR"].values)/division)
+        print("number of UnClassified (UC) :",len(dfROI_all_pop[dfROI_all_pop[label]=="UC"].values)/division)
+        
     # we ignore the unclassified subjects, and keep only the good responders, partial responders, and non-responders
     labels_to_keep= ["GR","PaR","NR"]
     pop_to_keep = pop[pop[label].isin(labels_to_keep)]
@@ -156,16 +162,16 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
     print(df_ROI_age_sex_site)
     if save:
         # save the df
-        if WM : str_WM = "_WM_Vol"
-        if longitudinal: filename= "df_ROI_age_sex_site_M00_M03"+str_WM+".csv"
-        else : filename = "df_ROI_age_sex_site_M00"+str_WM+".csv"
+        str_WM = "_WM_Vol" if WM else ""
+        if longitudinal: filename = "df_ROI_age_sex_site_M00_M03"+str_WM+"_v4labels.csv"
+        else : filename = "df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv"
         df_ROI_age_sex_site.to_csv(DATA_DIR+filename, index=False)
         print("df saved to : ",filename)
 
 
 def main():
-    save_df_ROI(WM=True, save=True) 
-    save_df_ROI(WM=True, save=True , longitudinal=True) 
+    # save_df_ROI(WM=False, save=True) 
+    save_df_ROI(WM=False, save=True , longitudinal=True) 
 
 
 if __name__ == "__main__":

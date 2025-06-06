@@ -45,6 +45,38 @@ def create_folder_if_not_exists(folder_path):
         os.makedirs(folder_path)
         print(f"Folder '{folder_path}' created.")
 
+def binarization(X_train, X_test, y_train):
+    """
+    Binarize features in X_train and X_test based on class-conditional medians from X_train.
+
+    Parameters:
+        X_train (ndarray): Training feature matrix (n_samples_train, n_features)
+        X_test  (ndarray): Test feature matrix (n_samples_test, n_features)
+        y_train (ndarray): Training labels (n_samples_train,), binary (0 or 1)
+
+    Returns:
+        X_train_bin (ndarray): Binarized X_train
+        X_test_bin  (ndarray): Binarized X_test
+    """
+    y_train_bool = y_train.astype(bool)
+
+    X_train_bin = np.empty_like(X_train, dtype=float)
+    X_test_bin = np.empty_like(X_test, dtype=float)
+
+    for col in range(X_train.shape[1]):
+        train_col = X_train[:, col]
+        test_col = X_test[:, col]
+
+        median_0 = np.median(train_col[~y_train_bool])
+        median_1 = np.median(train_col[y_train_bool])
+
+        threshold = (median_0 + median_1) / 2
+
+        X_train_bin[:, col] = (train_col > threshold).astype(float)
+        X_test_bin[:, col] = (test_col > threshold).astype(float)
+
+    return X_train_bin, X_test_bin
+
 def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
     assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
 

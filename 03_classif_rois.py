@@ -13,6 +13,7 @@ from sklearn.metrics import roc_auc_score, balanced_accuracy_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
 from plots import plot_glassbrain
+from utils import binarization
 from utils import get_scaled_data
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer
@@ -21,6 +22,10 @@ from utils import read_pkl, save_pkl, rename_col , get_rois
 # inputs
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
 DATA_DIR=ROOT+"data/processed/"
+DF_ROI_M0=DATA_DIR+"df_ROI_age_sex_site_M00_v4labels.csv"
+DF_ROI_M3_MINUS_M0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv"
+DF_ROI_M3M0 = DATA_DIR+"df_ROI_age_sex_site_M00_M03_v4labels.csv"
+ATLAS_ROI_NAMES_DF = DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv"
 
 # outputs
 RESULTS_DIR = ROOT+"reports/classification_results/"
@@ -143,7 +148,7 @@ def get_scores(pipeline,X_test_res, X_train_res):
 
 def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
                                     classifiers_config, dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
-                                        compute_and_save_shap, verbose): 
+                                        compute_and_save_shap, verbose, binarize=False): 
     
     
     if verbose : 
@@ -153,8 +158,7 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
     # Split data
     X_train, X_test = X_arr[train_index], X_arr[test_index]
     y_train, y_test = y_arr[train_index], y_arr[test_index]
-    # print("\n",df.loc[train_index])
-    # print("\n",df.loc[test_index])
+
 
     dict_cv_subjects[fold_idx]={"train_subjects_indices":train_index, "test_subjects_indices":test_index, \
                                 "train_subjects_ids":df_ROI_age_sex_site["participant_id"].loc[train_index].values, \
@@ -179,10 +183,14 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
 
         for classif_key, (estimator, param_grid) in classifiers_config.items():
             print("classif_key ",classif_key)
-            pipeline = make_pipeline(
-                StandardScaler(),
-                GridSearchCV(estimator=estimator, param_grid=param_grid, cv=3, n_jobs=1)
-            )
+            if binarize : pipeline = make_pipeline(GridSearchCV(estimator=estimator, param_grid=param_grid, cv=3, n_jobs=1))
+            else :
+                pipeline = make_pipeline(
+                    StandardScaler(),
+                    GridSearchCV(estimator=estimator, param_grid=param_grid, cv=3, n_jobs=1)
+                )
+            if binarize:
+                X_train_res, X_test_res = binarization(X_train_res, X_test_res, y_train)
 
             pipeline.fit(X_train_res, y_train)
             y_pred_test = pipeline.predict(X_test_res)
@@ -246,7 +254,7 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
 
 def classif_stacking():
     # classif with m3-m0 ROI using the same splits as for classif using m0 only
-    df_ROI_age_sex_site_dif = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site.csv")
+    df_ROI_age_sex_site_dif = pd.read_csv(DF_ROI_M3_MINUS_M0)
     splits = read_pkl(ROOT+"subjects_by_fold/subjects_for_each_fold_GRvsPaRNR_5foldCV_seed_1.pkl")
     df_ROI_age_sex_site_dif["y"] = df_ROI_age_sex_site_dif["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
     df_ROI_age_sex_site_dif = df_ROI_age_sex_site_dif.reset_index(drop=True)
@@ -335,7 +343,7 @@ def classif_stacking():
     df_results_m3minusm0 = create_df_from_dict(dict_cv)
 
     # get df of ROI for m00
-    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
+    df_ROI_age_sex_site = pd.read_csv(DF_ROI_M0)
     df_ROI_age_sex_site["y"] = df_ROI_age_sex_site["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
     df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
     print(df_ROI_age_sex_site)
@@ -436,7 +444,7 @@ def classif_stacking():
 def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, seed_label_permutations=42, classif_from_WM_ROI = False, \
-                        biomarkers_roi=False, classif_from_17_roi=False):
+                        biomarkers_roi=False, classif_from_17_roi=False, binarize=False):
     
     
     """
@@ -454,11 +462,12 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
 
     str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
 
-    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+".csv")
+    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv")
+    print(df_ROI_age_sex_site)
     
-    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+".csv")
+    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
     if classif_from_concat: # 91 subjects
-        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+".csv")
+        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
         df_ROI_age_sex_site_baseline = df_ROI_age_sex_site.copy()
         merged = df_ROI_age_sex_site_baseline.merge(df_ROI_age_sex_site_differences, on="participant_id", suffixes=('_m0', '_dif'))
         for col in ["age", "sex", "site", "y"]:
@@ -467,7 +476,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         merged = merged.rename(columns={f"{col}_m0": col for col in ["age", "sex", "site", "y"]})
         df_ROI_age_sex_site = merged.copy()
     if classif_from_m3:
-        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_M00_M03"+str_WM+".csv")
+        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_M00_M03"+str_WM+"_v4labels.csv")
         df_ROI_age_sex_site = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"]
         df_ROI_age_sex_site = df_ROI_age_sex_site.drop(columns=["session"])
 
@@ -491,7 +500,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         "L2LR": (lm.LogisticRegression(class_weight='balanced', fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
         "svm": (svm.SVC(class_weight='balanced',probability=True), {
             "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
-        }) ,
+        }),
         "EN": (lm.SGDClassifier(
             loss='log_loss', penalty='elasticnet', class_weight='balanced',random_state=42),{
             "alpha": 10.0 ** np.arange(-1, 2),
@@ -512,7 +521,6 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
             "subsample": [0.8]
         })
     }
-
 
     if classif_from_concat: 
         X_arr= df_ROI_age_sex_site[[col for col in df_ROI_age_sex_site.columns if any(col.startswith(roi) and (col.endswith('_dif') or col.endswith('_m0')) \
@@ -539,20 +547,25 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
                      " and 2 labels ", (y_arr == 2).sum())
 
     print("seed for CV : ",seed)
-    kf = StratifiedKFold(n_splits=nbfolds, shuffle=True, random_state=seed) 
-
     dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
+
+    # stratification 
+    df_stratification = df_ROI_age_sex_site.copy()
+    df_stratification['age_bin'] = pd.qcut(df_stratification['age'], q=16, duplicates='drop')
+    # combine y, sex, and age_bin into a single stratification label
+    df_stratification['stratify_label'] = df_stratification['y'].astype(str) + '_' + \
+        df_stratification['sex'].astype(str) + '_' + df_stratification['age_bin'].astype(str)
+    kf = StratifiedKFold(n_splits=nbfolds, shuffle=True, random_state=seed)
     
     if random_permutation: 
         np.random.seed(seed_label_permutations)
         y_arr = np.random.permutation(y_arr)
         if verbose : print("y_arr permuted :",y_arr)
 
-    for fold_idx, (train_index, test_index) in enumerate(kf.split(X_arr, y_arr)):
-
+    for fold_idx, (train_index, test_index) in enumerate(kf.split(df_stratification, df_stratification['stratify_label'])):
         classification_one_fold(fold_idx, X_arr, y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
                                     classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
-                                        compute_and_save_shap, verbose)
+                                        compute_and_save_shap, verbose, binarize)
 
     # print(dict_cv_subjects,"\n\n")
     # print(dict_cv)
@@ -569,11 +582,12 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     str_rois = ""
     if classif_from_17_roi : str_rois = "_17rois_only" 
     if biomarkers_roi : str_rois="_bilateralHippo_and_Amyg_only"
+    str_bin= "_binarized_roi" if binarize else ""
 
     if save_results :
         if not df_results.empty: 
-            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
-            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
+            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
+            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
 
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
@@ -595,17 +609,17 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     
     if save_results :
         if not df_coeffsL2LR.empty : 
-            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'.pkl')
+            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
         # if dict_cv_subjects : 
-        #     save_pkl(dict_cv_subjects,ROOT+'subjects_by_fold/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_seed_'+str(seed)+str_diff+str_WM+str_rois+".pkl")
+        #     save_pkl(dict_cv_subjects,ROOT+'subjects_by_fold/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_seed_'+str(seed)+str_diff+str_WM+str_rois+'_v4labels'+str_bin+".pkl")
     
 
     if compute_and_save_shap and not df_shap_svm.empty : 
         if random_permutation: 
             df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold_random_permutations_with_seed_"+\
-                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+".pkl")
+                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+".pkl")
         else : 
-            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+".pkl")
+            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+".pkl")
 
     if verbose :
         print("residualization age+sex+site mean roc auc and std :",round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].mean(),4),\
@@ -771,7 +785,6 @@ def read_classif_PaR_from_GRvsNR_models():
     print("AGE SEX SITE residualization ")
     get_results(classif_PaR_total, res="res_age_sex_site")
 
-
 def pls_regression(nb_components=3, significant_rois=None, \
                    nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
                    classif_from_differencem3m0=False, classif_from_concat=False,classif_from_m3=False):
@@ -790,10 +803,11 @@ def pls_regression(nb_components=3, significant_rois=None, \
 
     str_labels="_GRvsPaRNR"
 
-    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
-    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv")
+    df_ROI_age_sex_site = pd.read_csv(DF_ROI_M0)
+    
+    if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DF_ROI_M3_MINUS_M0)
     if classif_from_concat: # 91 subjects
-        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site.csv")
+        df_ROI_age_sex_site_differences = pd.read_csv(DF_ROI_M3_MINUS_M0)
         df_ROI_age_sex_site_baseline = df_ROI_age_sex_site.copy()
         merged = df_ROI_age_sex_site_baseline.merge(df_ROI_age_sex_site_differences, on="participant_id", suffixes=('_m0', '_dif'))
         for col in ["age", "sex", "site", "y"]:
@@ -802,7 +816,7 @@ def pls_regression(nb_components=3, significant_rois=None, \
         merged = merged.rename(columns={f"{col}_m0": col for col in ["age", "sex", "site", "y"]})
         df_ROI_age_sex_site = merged.copy()
     if classif_from_m3:
-        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_fevrier2025_M00_M03_labels_as_strings.csv")
+        df_ROI_age_sex_site = pd.read_csv(DF_ROI_M3M0)
         df_ROI_age_sex_site = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"]
         df_ROI_age_sex_site = df_ROI_age_sex_site.drop(columns=["session"])
 
@@ -1024,7 +1038,7 @@ def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_
     # Compute the mean of loadings for each component across all test set subjects of the 5 CV folds axis 0:
     mean_loadings, std_loadings = np.mean(loadings, axis=0), np.std(loadings, axis=0)
 
-    atlas_df = pd.read_csv(DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    atlas_df = pd.read_csv(ATLAS_ROI_NAMES_DF, sep=';')
     dict_atlas_roi_names = atlas_df.set_index('ROI_Neuromorphometrics_labels')['ROIname'].to_dict()
     feature_names = [rename_col(col, dict_atlas_roi_names) for col in significant_rois]
     
@@ -1104,20 +1118,20 @@ def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_
             loadings_one_component = {idx.rsplit(' ', 1)[0]: row['Comp '+str(comp_nb+1)] for idx, row in loadings_df.iterrows()}
             plot_glassbrain(dict_plot=loadings_one_component, title="loadings of PLS component "+str(comp_nb+1))
 
-def print_roc_auc_by_residualization_scheme(df_results, metric="roc_auc"):
+def print_performance_by_residualization_scheme(df_results, metric="roc_auc", std=False):
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
     filtered_results_nores = df_results[df_results["residualization"]=="no_res"]
 
     print("res age sex site")
     print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].mean(),4))
-    print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].std(),4))
-    print("res age sex ")
-    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].mean(),4))
-    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].std(),4))
-    print("no res")
-    print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].mean(),4))
-    print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].std(),4))
+    if std : print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].std(),4))
+    # print("res age sex ")
+    # print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].mean(),4))
+    # if std: print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].std(),4))
+    # print("no res")
+    # print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].mean(),4))
+    # if std: print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].std(),4))
 
 def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, biomarkers_roi=False, classif_from_17_roi=False):
@@ -1151,7 +1165,8 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
     four_rois = [roi+"_GM_Vol" for roi in four_rois]
     significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
     significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
-    atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    
+    atlas_df = pd.read_csv(ATLAS_ROI_NAMES_DF, sep=';')
     roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
     if classif_from_17_roi: 
         dict_weights = dict(zip(significant_rois, mean_weights_over_folds))
@@ -1174,9 +1189,25 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
 def main():
 
     # to perform classification:
-    # classification(save_results=True, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=True, print_pvals=True)
+    classification(save_results=True, seed=5, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, print_pvals=True, binarize=True)
+    
+    # 2 --> 70% , 57% bacc et 46% sensitivity (binarized : 73% , 62% bacc et 39% sensitivity)
+    # 42 --> 69% , 61% bacc 47% sensitivity et (binarized : 69%, 65% bacc et 43% sensitivity)
+    # 5 --> 68%
+    # 6 --> 65%
+    # 7 --> 68%
+    # 8 --> 67%
+    # 13 --> 69% (64% balanced accuracy)
+    
+    # seed=2
+    df= read_pkl(RESULTS_DIR + "results_classification_seed_42_GRvsPaRNR_5fold_v4labels_binarized_roi.pkl")
+    print_performance_by_residualization_scheme(df, metric="roc_auc")
+    print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
+    print_performance_by_residualization_scheme(df, metric="specificity")
+    print_performance_by_residualization_scheme(df, metric="sensitivity")
 
 
+    quit()
     
     # to plot logistic regression weights with 17 rois:
     # plot_L2LR_weights(classif_from_17_roi=True)
@@ -1192,9 +1223,9 @@ def main():
     plot_mean_loadings_over_CV_folds(df_results, significant_rois, plot=False, glassbrains=True, nb_components=2,\
         jointplot=True)
     """
-    df= read_pkl(RESULTS_DIR+"results_classification_seed_1_GRvsPaRNR_5fold_WM_Vol.pkl")
-    print_roc_auc_by_residualization_scheme(df)
-    quit()
+    # df= read_pkl(RESULTS_DIR+"results_classification_seed_1_GRvsPaRNR_5fold_WM_Vol.pkl")
+    # print_roc_auc_by_residualization_scheme(df)
+    # quit()
     # to print the classification results using only 4 rois: bilateral hippocampus and amygdala
     """
     df = read_pkl("reports/classification_results/results_classification_seed_1_GRvsPaRNR_5fold_bilateralHippo_and_Amyg_only.pkl")
