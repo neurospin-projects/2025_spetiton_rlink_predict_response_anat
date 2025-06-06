@@ -17,6 +17,7 @@ with longitudinal=True in save_df_ROI(), it saves the df of ROIs (eitehr GM and 
 # classification
 03_classif_rois.py
 - classification of rois (M0, M3-M0, M3, concatenation of M3-M0 and M0, stacking of M3 and M0 SVM RBF scores) using L2LR, EN, SVM-RBF, MLP, and Gradient Boosting (xgboost).
+- binarize flag is only used to test binarization of input features (ROI values set to 0 or 1) in each CV fold using thresholds found with the training data of the current fold (we only test this method as it is used in "Brain morphometric features predict medication response in youth with bipolar disorder: a prospective randomized clinical trial." , Lei et al, doi: 10.1017/S0033291722000757)
 - PLS regression
 
 # feature importance analyses (using SHAP values)
