@@ -4,7 +4,7 @@ import numpy as np
 import nibabel
 import xml.etree.ElementTree as ET
 from sklearn.preprocessing import StandardScaler
-
+from sklearn.model_selection import train_test_split
 from nilearn import plotting, image
 import matplotlib.pyplot as plt
 from nilearn.image import resample_to_img
@@ -20,7 +20,84 @@ VOL_FILE_VBM = "/drf/local/spm12/tpm/labels_Neuromorphometrics.nii"
 VBMLOOKUP_FILE = "/drf/local/spm12/tpm/labels_Neuromorphometrics.xml"
 ONE_SUBJECT_NIFTI = "/neurospin/rlink/REF_DATABASE/derivatives/cat12-vbm-v12.8.2_long/sub-11327/ses-M00/mri/mwp1rusub-11327_ses-M00_acq-3DT1_rec-yBCyGC_run-1_T1w.nii"
 BRAIN_MASK_PATH = DATA_DIR+"mni_cerebrum-gm-mask_1.5mm.nii.gz"
+ATLAS_DF = DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv"
+OPENBHB_DATAFRAME = DATA_DIR+"OpenBHB_roi.csv"
 
+
+def get_lists_roi_in_both_openBHB_and_rlink():
+    """
+        returns list of rois both in openbhb and rlink dataframes
+        GM and CSF volumes only
+        the two lists contain the same roi (varying names) in the same order
+    """
+    df_openbhb = pd.read_csv(OPENBHB_DATAFRAME)
+    roi_df_openbhb = [roi for roi in df_openbhb.columns if roi.endswith("_CSF_Vol") or roi.endswith("_GM_Vol")]
+
+    atlas_df = pd.read_csv(ATLAS_DF, sep=";")
+    # pre-selection of roi that actually are in the OpenBHB dataframe
+    atlas_df = atlas_df[atlas_df["ROIabbr"].isin(roi_df_openbhb)]
+
+    abbr_to_label_counts = atlas_df.groupby('ROIabbr')['ROI_Neuromorphometrics_labels'].nunique()
+    label_to_abbr_counts = atlas_df.groupby('ROI_Neuromorphometrics_labels')['ROIabbr'].nunique()
+
+    # Get the ones that have exactly one mapping 
+    valid_abbrs = abbr_to_label_counts[abbr_to_label_counts == 1].index
+    valid_labels = label_to_abbr_counts[label_to_abbr_counts == 1].index
+
+    # Keep only rows where both sides are in the valid sets
+    df_bijection = atlas_df[
+        atlas_df['ROIabbr'].isin(valid_abbrs) &
+        atlas_df['ROI_Neuromorphometrics_labels'].isin(valid_labels)
+    ]
+    list_roi_openbhb = df_bijection['ROIabbr']
+    list_roi_rlink = df_bijection['ROI_Neuromorphometrics_labels']
+    
+    list_roi_openbhb = [ l for l in list_roi_openbhb if l.endswith("_GM_Vol") or l.endswith("_CSF_Vol")]
+    list_roi_rlink = [ l for l in list_roi_rlink if l.endswith("_GM_Vol") or l.endswith("_CSF_Vol")]
+
+    assert len(list_roi_rlink)==len(list_roi_openbhb)
+    # for cpt in range(len(list_roi_openbhb)):
+        # print(list_roi_openbhb[cpt],"  ", list_roi_rlink[cpt])
+    return list_roi_openbhb, list_roi_rlink
+
+def strat_stats(subset, name):
+    mean_age = subset['age'].mean()
+    prop_female = subset['sex'].mean()  # sex==1 is female
+    print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}")
+
+def stratified_split(df_input, test_size=0.2, random_state=42, verbose=False):
+    # Bin continuous 'age' into quantiles for stratification
+    df = df_input.copy()
+    df['age_bin'] = pd.qcut(df['age'], q=3, duplicates='drop')
+
+    # Bin site: group rare sites
+    site_counts = df['site'].value_counts()
+    min_site_size=70
+    rare_sites = site_counts[site_counts < min_site_size].index
+    df['site_binned'] = df['site'].replace(rare_sites, 'other')
+
+    df['strata'] = (
+        df['age_bin'].astype(str) + "_" +
+        df['sex'].astype(str) + "_" +
+        df['site_binned'].astype(str)
+    )
+
+    # Perform stratified split
+    train_idx, test_idx = train_test_split(
+        df.index,
+        test_size=test_size,
+        stratify=df['strata'],
+        random_state=random_state
+    )
+
+    df_train = df.loc[train_idx].drop(columns=['age_bin', 'strata'])
+    df_test = df.loc[test_idx].drop(columns=['age_bin', 'strata'])
+
+    if verbose:
+        strat_stats(df_train, "Train")
+        strat_stats(df_test, "Test")
+
+    return df_train, df_test, train_idx, test_idx
 
 
 def scale_rois_with_tiv(dfROI, all_rois, target_tiv=1500.0):

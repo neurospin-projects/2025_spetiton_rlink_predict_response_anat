@@ -10,14 +10,13 @@ import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from sklearn.linear_model import Ridge, ElasticNet, BayesianRidge
 from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn import svm
 from sklearn.preprocessing import SplineTransformer
 from sklearn.compose import ColumnTransformer
 from scipy.optimize import minimize
 from scipy.stats import norm
-
+from utils import stratified_split
 
 # for residualization on site
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
@@ -149,83 +148,36 @@ def plot_spline_knots_effect(df_train, roi, sex_value=1, knots_list=[3,5,7,9]):
     plt.show()
 
 
-def strat_stats(subset, name):
-    mean_age = subset['age'].mean()
-    prop_female = subset['sex'].mean()  # sex==1 is female
-    print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}")
 
-
-def stratified_split(df, test_size=0.2, random_state=42, verbose=False):
-    # Bin continuous 'age' into quantiles for stratification
-    df = df.copy()
-    df['age_bin'] = pd.qcut(df['age'], q=3, duplicates='drop')
-
-    # Bin site: group rare sites
-    site_counts = df['site'].value_counts()
-    min_site_size=70
-    rare_sites = site_counts[site_counts < min_site_size].index
-    df['site_binned'] = df['site'].replace(rare_sites, 'other')
-
-    df['strata'] = (
-        df['age_bin'].astype(str) + "_" +
-        df['sex'].astype(str) + "_" +
-        df['site_binned'].astype(str)
-    )
-
-    # Perform stratified split
-    train_idx, test_idx = train_test_split(
-        df.index,
-        test_size=test_size,
-        stratify=df['strata'],
-        random_state=random_state
-    )
-
-    df_train = df.loc[train_idx].drop(columns=['age_bin', 'strata'])
-    df_test = df.loc[test_idx].drop(columns=['age_bin', 'strata'])
-
-    if verbose:
-        strat_stats(df_train, "Train")
-        strat_stats(df_test, "Test")
-
-    return df_train, df_test
 
 
 def train_normative_model_with_openBHB(roi, bsplines=True, warp=False, residualize=False):
     df_openbhb = pd.read_csv(OPENBHB_DATAFRAME)
     # print("dataframe OpenBHB rois ...\n",df_openbhb)
-
-    if residualize: 
-        print("Residualizing on site")
-        residualizer = Residualizer(
-            data=df_openbhb,
-            formula_res="site",
-            formula_full= "site + age + sex"
-        )
-        Zres = residualizer.get_design_mat(df_openbhb)
-        # select roi features
-        roi_openbhb = [r for r in list(df_openbhb.columns) if r.endswith("_CSF_Vol") or r.endswith("_GM_Vol")]
-        X_values = df_openbhb[roi_openbhb].values
-        # fit and apply residualization
-        residualizer.fit(X_values, Zres)
-        X_values = residualizer.transform(X_values, Zres)
-        df_openbhb_new = pd.DataFrame(X_values, columns=roi_openbhb, index=df_openbhb.index)
-        df_openbhb_new[["age","sex","site"]] = df_openbhb[["age","sex","site"]]
-        df_openbhb_new.insert(0, 'participant_id', df_openbhb["participant_id"])   
-        df_train, df_test = stratified_split(df_openbhb_new)   
-
-    else : df_train, df_test = stratified_split(df_openbhb)
-
-
-    # plot_spline_knots_effect(df_train, roi, sex_value=0)
-    # plot_spline_knots_effect(df_train, roi, sex_value=1)
-
-    # Create spline basis for age with 3 degrees of freedom (knots)
-    # This creates new spline basis columns for age
+    df_train, df_test, train_idx, test_idx  = stratified_split(df_openbhb)
     X_tr = df_train[['age', 'sex']]
     X_te = df_test[['age', 'sex']]
     y_tr =  df_train[roi].values
     y_te =  df_test[roi].values
 
+    if residualize:  
+        print("Residualizing on sex and site")
+        residualizer = Residualizer(
+            data=df_openbhb,
+            formula_res="site",
+            formula_full= "site + sex + age"
+        )
+        Zres = residualizer.get_design_mat(df_openbhb)
+        Zres_train, Zres_test = Zres[train_idx], Zres[test_idx]
+        residualizer.fit(y_tr.reshape(-1, 1), Zres_train)
+        y_tr = residualizer.transform(y_tr.reshape(-1, 1), Zres_train)
+        y_te = residualizer.transform(y_te.reshape(-1, 1), Zres_test)
+    
+
+    # plot_spline_knots_effect(df_train, roi, sex_value=0)
+    # plot_spline_knots_effect(df_train, roi, sex_value=1)
+
+  
     # Warp target
     epsilon_opt = 0.0
     beta_opt = 1.0
@@ -239,6 +191,9 @@ def train_normative_model_with_openBHB(roi, bsplines=True, warp=False, residuali
 
 
     if bsplines:
+        # Create spline basis for age with 3 degrees of freedom (knots)
+        # This creates new spline basis columns for age
+
         preprocessor = ColumnTransformer([
             ('spline_age', SplineTransformer(degree=3, n_knots=3), ['age']),
             ('passthrough_sex', 'passthrough', ['sex'])
@@ -253,7 +208,7 @@ def train_normative_model_with_openBHB(roi, bsplines=True, warp=False, residuali
 
     # model = BayesianRidge() # works the same as ridge with gridsearch
     
-    pipeline.fit(X_tr, y_tr)
+    pipeline.fit(X_tr, y_tr.ravel())
     y_pred = pipeline.predict(X_te)
 
     # Inverse warp to get predictions in original space
@@ -297,7 +252,8 @@ def train_normative_model_with_openBHB(roi, bsplines=True, warp=False, residuali
     # plt.title("Q-Q Plot of Residuals")
     # plt.show()
 
-    return pipeline, resid_std, epsilon_opt, beta_opt
+    if residualize : return pipeline, resid_std, epsilon_opt, beta_opt, residualizer
+    else : return pipeline, resid_std, epsilon_opt, beta_opt
 
 
 def compute_zscores(roi_values, X_new, model, resid_std, warp=False, epsilon_opt=0, beta_opt=1):
@@ -479,7 +435,7 @@ def plot_violin_4_groups(zscoresM0_label1, zscoresM3_label1,
     plt.tight_layout()
     plt.show()
 
-def get_zscores_by_label(label, index, warp=False, comparable_zscores_N91=True):
+def get_zscores_by_label(label, index, warp=False, comparable_zscores_N91=True, residualize=False):
     """
         label (int) classification label
         index (int) index of roi in FOUR_REGIONS_OF_INTEREST and FOUR_REGIONS_OF_INTEREST_LONG lists
@@ -491,17 +447,18 @@ def get_zscores_by_label(label, index, warp=False, comparable_zscores_N91=True):
     roi = FOUR_REGIONS_OF_INTEREST[index]
     roi_rlink = FOUR_REGIONS_OF_INTEREST_LONG[index]
     print(roi_rlink)
-    model, resid_std, eps, beta = train_normative_model_with_openBHB(roi, warp=warp)
-    
+    if residualize: model, resid_std, eps, beta , residualizer = train_normative_model_with_openBHB(roi, warp=warp, residualize=residualize)
+    else: model, resid_std, eps, beta = train_normative_model_with_openBHB(roi, warp=warp)
+
     df_M0, df_M3 = get_M0_M3_df_for_chosen_label(label, label_type, comparable_dataframes_N91=comparable_zscores_N91)
     roi_values_M0 = df_M0[roi_rlink].values
     roi_values_M3 = df_M3[roi_rlink].values
 
     X_rlink_M0 = df_M0[['age', 'sex']]
     X_rlink_M3 = df_M3[['age', 'sex']]
-
     z_scores_M0 = compute_zscores(roi_values_M0, X_rlink_M0, model, resid_std, warp=warp, epsilon_opt=eps, beta_opt=beta)
     z_scores_M3 = compute_zscores(roi_values_M3, X_rlink_M3, model, resid_std, warp=warp, epsilon_opt=eps, beta_opt=beta)
+
     print(f"Z-scores M0: mean={np.mean(z_scores_M0):.3f}, std={np.std(z_scores_M0, ddof=1):.3f}")
     print(f"Z-scores M0: min={np.min(z_scores_M0):.3f}, max={np.max(z_scores_M0):.3f}")
 
@@ -548,25 +505,26 @@ def print_participant_id_where_m0_is_over_m3(roi_index=0):
     print(f"total: {count_par+count_nr+count_gr}/91")
 
 def main():
-    for index in range(4): print_participant_id_where_m0_is_over_m3(roi_index=index)
+    # for index in range(4): print_participant_id_where_m0_is_over_m3(roi_index=index)
 
-    quit()
 
     # train NM for each roi of the list
     # for index in range(4):
     #     roi = FOUR_REGIONS_OF_INTEREST[index]
     #     model, resid_std = train_normative_model_with_openBHB(roi)
-    labels_onevsall = False
-    comparable_zscores_N91=False
+    labels_onevsall = True
+    comparable_zscores_N91=True
+    residualize=False # residualize on site
+
     for index in range(4):
         if labels_onevsall: # GR vs NR/PaR
-            zscoresM0_label0, zscoresM3_label0 = get_zscores_by_label(0, index, comparable_zscores_N91=comparable_zscores_N91)
-            zscoresM0_label1, zscoresM3_label1 = get_zscores_by_label(1, index, comparable_zscores_N91=comparable_zscores_N91)
+            zscoresM0_label0, zscoresM3_label0 = get_zscores_by_label(0, index, comparable_zscores_N91=comparable_zscores_N91,residualize=residualize)
+            zscoresM0_label1, zscoresM3_label1 = get_zscores_by_label(1, index, comparable_zscores_N91=comparable_zscores_N91,residualize=residualize)
             m0_by_label = [zscoresM0_label1, zscoresM0_label0]
             m3_by_label = [zscoresM3_label1, zscoresM3_label0]
             
-            if comparable_zscores_N91: scatter_M0_vs_M3_by_label(m0_by_label, m3_by_label, index, label_names=["GR","PaR/NR"], colors=None)
-            else: plot_violin_4_groups(zscoresM0_label1, zscoresM3_label1, zscoresM0_label0, zscoresM3_label0, index)
+            # if comparable_zscores_N91: scatter_M0_vs_M3_by_label(m0_by_label, m3_by_label, index, label_names=["GR","PaR/NR"], colors=None)
+            # else: plot_violin_4_groups(zscoresM0_label1, zscoresM3_label1, zscoresM0_label0, zscoresM3_label0, index)
 
         else:  # case in which we want plots detailed for GR, NR, and PaR
             zscoresM0_labelGR, zscoresM3_labelGR = get_zscores_by_label("GR", index, comparable_zscores_N91=comparable_zscores_N91)
@@ -574,10 +532,10 @@ def main():
             zscoresM0_labelPaR, zscoresM3_labelPaR = get_zscores_by_label("PaR", index, comparable_zscores_N91=comparable_zscores_N91)
             m0_by_label=[zscoresM0_labelGR, zscoresM0_labelPaR, zscoresM0_labelNR]
             m3_by_label = [zscoresM3_labelGR, zscoresM3_labelPaR, zscoresM3_labelNR]
-            if comparable_zscores_N91:  scatter_M0_vs_M3_by_label(m0_by_label, m3_by_label,index, label_names=["GR","PaR","NR"], colors=None)
-            else : plot_violin_6_groups(zscoresM0_labelGR, zscoresM3_labelGR, zscoresM0_labelPaR, zscoresM3_labelPaR, 
-                            zscoresM0_labelNR, zscoresM3_labelNR, index)
-        # plot_zscore_changes_by_group(index, zscoresM0_label0, zscoresM3_label0, zscoresM0_label1, zscoresM3_label1)
+            # if comparable_zscores_N91:  scatter_M0_vs_M3_by_label(m0_by_label, m3_by_label,index, label_names=["GR","PaR","NR"], colors=None)
+            # else : plot_violin_6_groups(zscoresM0_labelGR, zscoresM3_labelGR, zscoresM0_labelPaR, zscoresM3_labelPaR, 
+            #                 zscoresM0_labelNR, zscoresM3_labelNR, index)
+            # plot_zscore_changes_by_group(index, zscoresM0_label0, zscoresM3_label0, zscoresM0_label1, zscoresM3_label1)
 
     
 
