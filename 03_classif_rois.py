@@ -151,13 +151,15 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                                         compute_and_save_shap, verbose, binarize=False): 
     
     
-    if verbose : 
-        print("fold nb ",fold_idx)
-        print(len(train_index), len(test_index))
 
     # Split data
     X_train, X_test = X_arr[train_index], X_arr[test_index]
     y_train, y_test = y_arr[train_index], y_arr[test_index]
+    if verbose : 
+        print("fold nb ",fold_idx)
+        print(len(train_index), len(test_index))
+        print("y_train nb of 0 labels ",(y_train == 0).sum(), ", 1 labels ", (y_train == 1).sum())
+        print("y_test nb of 0 labels ",(y_test == 0).sum(), ", 1 labels ", (y_test == 1).sum())
 
 
     dict_cv_subjects[fold_idx]={"train_subjects_indices":train_index, "test_subjects_indices":test_index, \
@@ -443,13 +445,13 @@ def classif_stacking():
 
 def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
-                      classif_from_concat=False, classif_from_m3=False, seed_label_permutations=42, classif_from_WM_ROI = False, \
+                      classif_from_concat=False, classif_from_m3=False, seed_label_permutations=None, classif_from_WM_ROI = False, \
                         biomarkers_roi=False, classif_from_17_roi=False, binarize=False):
     
     
     """
     print_pvals (bool) : whether to print p-values describing the classification significativity
-    compute_and_save_shap (bool): whether to compute SHAP values
+    compute_and_save_shap (bool): whether to compute SHAP values, if True, runs only svm and saves only svm results
     random_permutation (bool) : random permtutation of labels for training (used to establish a null hypothesis for SHAP values)
     classif_from_concat (bool): True if classifying from the concatenation of m0 and m3-m0 features
     classif_from_differencem3m0 (bool) : True if classifying from the difference m3-m0
@@ -458,7 +460,8 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     """
     
     str_labels="_GRvsPaRNR"
-    print("seed_label_permutations ",seed_label_permutations)
+    if not random_permutation: assert seed_label_permutations is None
+    else : print("seed_label_permutations ",seed_label_permutations)
 
     str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
 
@@ -496,31 +499,37 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     }
 
     # Define classifiers and their grid parameters
-    classifiers_config = {
-        "L2LR": (lm.LogisticRegression(class_weight='balanced', fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
-        "svm": (svm.SVC(class_weight='balanced',probability=True), {
-            "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
-        }),
-        "EN": (lm.SGDClassifier(
-            loss='log_loss', penalty='elasticnet', class_weight='balanced',random_state=42),{
-            "alpha": 10.0 ** np.arange(-1, 2),
-            "l1_ratio": [0.1, 0.5, 0.9]
-        }),
-        "MLP": (MLPClassifier(random_state=1), {
-            "hidden_layer_sizes": [
-                (100,), (50,), (25,), (10,), (5,),
-                (100, 50), (50, 25), (25, 10), (10, 5),
-                (100, 50, 25), (50, 25, 10), (25, 10, 5)
-            ],
-            "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]
-        }),
-        "xgboost": (XGBClassifier(random_state=42, n_jobs=1), {
-            "n_estimators": [10, 30, 50],
-            "learning_rate": [0.05, 0.1],
-            "max_depth": [3, 6],
-            "subsample": [0.8]
-        })
-    }
+    if compute_and_save_shap:
+        classifiers_config = {
+            "svm": (svm.SVC(class_weight='balanced',probability=True), {
+                "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
+            })}
+    else:
+        classifiers_config = {
+            "L2LR": (lm.LogisticRegression(class_weight='balanced', fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
+            "svm": (svm.SVC(class_weight='balanced',probability=True), {
+                "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
+            }),
+            "EN": (lm.SGDClassifier(
+                loss='log_loss', penalty='elasticnet', class_weight='balanced',random_state=42),{
+                "alpha": 10.0 ** np.arange(-1, 2),
+                "l1_ratio": [0.1, 0.5, 0.9]
+            }),
+            "MLP": (MLPClassifier(random_state=1), {
+                "hidden_layer_sizes": [
+                    (100,), (50,), (25,), (10,), (5,),
+                    (100, 50), (50, 25), (25, 10), (10, 5),
+                    (100, 50, 25), (50, 25, 10), (25, 10, 5)
+                ],
+                "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]
+            }),
+            "xgboost": (XGBClassifier(random_state=42, n_jobs=1), {
+                "n_estimators": [10, 30, 50],
+                "learning_rate": [0.05, 0.1],
+                "max_depth": [3, 6],
+                "subsample": [0.8]
+            })
+        }
 
     if classif_from_concat: 
         X_arr= df_ROI_age_sex_site[[col for col in df_ROI_age_sex_site.columns if any(col.startswith(roi) and (col.endswith('_dif') or col.endswith('_m0')) \
@@ -543,8 +552,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     if verbose:
         print("np.shape(X)",np.shape(X_arr), type(X_arr)) 
         print("np.shape(y)",np.shape(y_arr), type(y_arr))
-        print("y nb of 0 labels ",(y_arr == 0).sum(), ", 1 labels ", (y_arr == 1).sum(),\
-                     " and 2 labels ", (y_arr == 2).sum())
+        print("y nb of 0 labels ",(y_arr == 0).sum(), ", 1 labels ", (y_arr == 1).sum())
 
     print("seed for CV : ",seed)
     dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
@@ -1118,20 +1126,23 @@ def plot_mean_loadings_over_CV_folds(df_results, significant_rois, res="res_age_
             loadings_one_component = {idx.rsplit(' ', 1)[0]: row['Comp '+str(comp_nb+1)] for idx, row in loadings_df.iterrows()}
             plot_glassbrain(dict_plot=loadings_one_component, title="loadings of PLS component "+str(comp_nb+1))
 
-def print_performance_by_residualization_scheme(df_results, metric="roc_auc", std=False):
+def print_performance_by_residualization_scheme(df_results, metric="roc_auc", std=False, tr_or_te = "test"):
+    
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
     filtered_results_nores = df_results[df_results["residualization"]=="no_res"]
 
     print("res age sex site")
-    print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].mean(),4))
-    if std : print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_test"].std(),4))
-    # print("res age sex ")
-    # print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].mean(),4))
-    # if std: print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_test"].std(),4))
-    # print("no res")
-    # print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].mean(),4))
-    # if std: print(round(filtered_results_nores.groupby("classifier")[metric+"_test"].std(),4))
+    means_res_age_sex_site=filtered_results_res_age_sex_site.groupby("classifier")[metric+"_"+tr_or_te].mean()
+    print(round(means_res_age_sex_site,4))
+    if std : print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
+    print("res age sex ")
+    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_"+tr_or_te].mean(),4))
+    if std: print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
+    print("no res")
+    print(round(filtered_results_nores.groupby("classifier")[metric+"_"+tr_or_te].mean(),4))
+    if std: print(round(filtered_results_nores.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
+    return means_res_age_sex_site["svm"]
 
 def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, biomarkers_roi=False, classif_from_17_roi=False):
@@ -1189,7 +1200,8 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
 def main():
 
     # to perform classification:
-    classification(save_results=True, seed=5, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, print_pvals=True, binarize=True)
+    # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, print_pvals=True, binarize=False)
+
     
     # 2 --> 70% , 57% bacc et 46% sensitivity (binarized : 73% , 62% bacc et 39% sensitivity)
     # 42 --> 69% , 61% bacc 47% sensitivity et (binarized : 69%, 65% bacc et 43% sensitivity)
@@ -1198,13 +1210,39 @@ def main():
     # 7 --> 68%
     # 8 --> 67%
     # 13 --> 69% (64% balanced accuracy)
+    """
+    start_time = time.time()
+    for n in range(1,1001): 
+        classification(seed=13, compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = int(elapsed_time % 60)
+    print(f"The function classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n) \
+    took {hours}h {minutes}m {seconds}s to run.")
+    """
     
     # seed=2
-    df= read_pkl(RESULTS_DIR + "results_classification_seed_42_GRvsPaRNR_5fold_v4labels_binarized_roi.pkl")
+    df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(13)+"_GRvsPaRNR_5fold_v4labels.pkl")
     print_performance_by_residualization_scheme(df, metric="roc_auc")
-    print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
-    print_performance_by_residualization_scheme(df, metric="specificity")
-    print_performance_by_residualization_scheme(df, metric="sensitivity")
+    quit()
+
+    bacc_res_age_sex_site_svm_best = 0
+    for seed in range(1,31):
+        print(seed)
+        df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(seed)+"_GRvsPaRNR_5fold_v4labels.pkl")
+        # print_performance_by_residualization_scheme(df, metric="roc_auc",std=True)
+        bacc_res_age_sex_site_svm = print_performance_by_residualization_scheme(df, metric="balanced_accuracy",tr_or_te = "train")
+        if bacc_res_age_sex_site_svm >=bacc_res_age_sex_site_svm_best:
+            bacc_res_age_sex_site_svm_best = bacc_res_age_sex_site_svm
+            best_seed = seed
+    print("\nbest: ",round(bacc_res_age_sex_site_svm_best,4))
+    print("seed : ",best_seed)
+
+    # print_performance_by_residualization_scheme(df, metric="specificity")
+    # print_performance_by_residualization_scheme(df, metric="sensitivity")
+    
 
 
     quit()
@@ -1232,17 +1270,10 @@ def main():
     print_roc_auc_by_residualization_scheme(df, metric="balanced_accuracy")
     """
 
+    
+    
+
     """
-    start_time = time.time()
-    for n in range(1,1001):
-        classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    hours = int(elapsed_time // 3600)
-    minutes = int((elapsed_time % 3600) // 60)
-    seconds = int(elapsed_time % 60)
-    print(f"The function classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n) \
-    took {hours}h {minutes}m {seconds}s to run.")
 
     # best nb of components all ROI
     # find_best_number_of_components_pls_reg()
@@ -1260,6 +1291,7 @@ def main():
     
     plot_mean_loadings_over_CV_folds(df_results, specific_roi, res="res_age_sex_site")
     """
+    
 
 if __name__ == "__main__":
     main()
