@@ -14,10 +14,9 @@ from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
 from plots import plot_glassbrain
 from utils import binarization
-from utils import get_scaled_data
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer
-from utils import read_pkl, save_pkl, rename_col , get_rois
+from utils import read_pkl, rename_col , get_rois, make_stratified_splitter, strat_stats, get_scores
 
 # inputs
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
@@ -132,19 +131,7 @@ def initialize_results_dicts(nbfolds, residualization_configs, classifiers_confi
 
     return dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm
     
-def get_scores(pipeline,X_test_res, X_train_res):
-    if hasattr(pipeline, 'decision_function'):
-        score_test = pipeline.decision_function(X_test_res)
-        score_train = pipeline.decision_function(X_train_res)
-    elif hasattr(pipeline, 'predict_log_proba'):
-        score_test = pipeline.predict_log_proba(X_test_res)[:, 1]
-        score_train = pipeline.predict_log_proba(X_train_res)[:, 1]
-    elif hasattr(pipeline, 'predict_proba'):
-        score_test = pipeline.predict_proba(X_test_res)[:, 1]
-        score_train = pipeline.predict_proba(X_train_res)[:, 1]
-    else:
-        raise RuntimeError("There is an issue with the classifier.")
-    return score_test, score_train
+
 
 def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
                                     classifiers_config, dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
@@ -156,7 +143,6 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
     X_train, X_test = X_arr[train_index], X_arr[test_index]
     y_train, y_test = y_arr[train_index], y_arr[test_index]
     if verbose : 
-        print("fold nb ",fold_idx)
         print(len(train_index), len(test_index))
         print("y_train nb of 0 labels ",(y_train == 0).sum(), ", 1 labels ", (y_train == 1).sum())
         print("y_test nb of 0 labels ",(y_test == 0).sum(), ", 1 labels ", (y_test == 1).sum())
@@ -168,7 +154,7 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
 
     for residual_key, formula in residualization_configs.items():
         if formula:
-            print(f"Residualizing with: {formula}")
+            # print(f"Residualizing with: {formula}")
             residualizer = Residualizer(
                 data=df_ROI_age_sex_site[["age", "sex", "site", "y"]],
                 formula_res=formula,
@@ -184,12 +170,12 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
             X_train_res, X_test_res = X_train, X_test
 
         for classif_key, (estimator, param_grid) in classifiers_config.items():
-            print("classif_key ",classif_key)
-            if binarize : pipeline = make_pipeline(GridSearchCV(estimator=estimator, param_grid=param_grid, cv=3, n_jobs=1))
+            # print("classif_key ",classif_key)
+            if binarize : pipeline = make_pipeline(GridSearchCV(estimator=estimator, param_grid=param_grid, cv=5, n_jobs=1))
             else :
                 pipeline = make_pipeline(
                     StandardScaler(),
-                    GridSearchCV(estimator=estimator, param_grid=param_grid, cv=3, n_jobs=1)
+                    GridSearchCV(estimator=estimator, param_grid=param_grid, cv=5, n_jobs=1)
                 )
             if binarize:
                 X_train_res, X_test_res = binarization(X_train_res, X_test_res, y_train)
@@ -234,6 +220,10 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
             specificity_tr= recall_score(y_train, y_pred_train, pos_label=0) 
             sensitivity_tr= recall_score(y_train, y_pred_train, pos_label=1)
 
+            test_ids = df_ROI_age_sex_site.iloc[test_index]["participant_id"].values
+            misclassified_idx_te = y_test != y_pred_test
+            misclassified_test_ids = test_ids[misclassified_idx_te]
+
             bacc_te = balanced_accuracy_score(y_test, y_pred_test)
             bacc_tr = balanced_accuracy_score(y_train, y_pred_train)
                 
@@ -253,6 +243,8 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                 "specificity_train": specificity_tr,
                 "sensitivity_train":sensitivity_tr,
             })
+
+    return misclassified_test_ids
 
 def classif_stacking():
     # classif with m3-m0 ROI using the same splits as for classif using m0 only
@@ -288,7 +280,7 @@ def classif_stacking():
         X_train, X_test = X_arr[train_index], X_arr[test_index]
         y_train, y_test = y_arr[train_index], y_arr[test_index]
         formula = "age + sex + site"
-        print(f"Residualizing with: {formula}")
+        # print(f"Residualizing with: {formula}")
         residualizer = Residualizer(
             data=df_ROI_age_sex_site_dif[["age", "sex", "site", "y"]],
             formula_res=formula,
@@ -354,7 +346,7 @@ def classif_stacking():
     print(results_classif_m00)
     print(results_classif_m00[results_classif_m00["fold"]==0]["score_test"])
     for fold in range(5):
-        print("fold ",fold)
+        # print("fold ",fold)
         train_ids = splits[fold]["train_subjects_ids"]
         test_ids = splits[fold]["test_subjects_ids"]
         train_index = df_ROI_age_sex_site_dif[df_ROI_age_sex_site_dif["participant_id"].isin(train_ids)].index
@@ -443,12 +435,12 @@ def classif_stacking():
     # print(round(df_results_m3minusm0["specificity_test"].mean(),4))
     # print(round(df_results_m3minusm0["sensitivity_test"].mean(),4))
 
-def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, verbose=True, \
+def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, seed_label_permutations=None, classif_from_WM_ROI = False, \
                         biomarkers_roi=False, classif_from_17_roi=False, binarize=False):
     
-    
+    # seed was 1 for v3 labels
     """
     print_pvals (bool) : whether to print p-values describing the classification significativity
     compute_and_save_shap (bool): whether to compute SHAP values, if True, runs only svm and saves only svm results
@@ -466,11 +458,10 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
 
     df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv")
-    print(df_ROI_age_sex_site)
     
     if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
     if classif_from_concat: # 91 subjects
-        df_ROI_age_sex_site_differences = pd.read_csv(ROOT+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
+        df_ROI_age_sex_site_differences = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
         df_ROI_age_sex_site_baseline = df_ROI_age_sex_site.copy()
         merged = df_ROI_age_sex_site_baseline.merge(df_ROI_age_sex_site_differences, on="participant_id", suffixes=('_m0', '_dif'))
         for col in ["age", "sex", "site", "y"]:
@@ -479,7 +470,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
         merged = merged.rename(columns={f"{col}_m0": col for col in ["age", "sex", "site", "y"]})
         df_ROI_age_sex_site = merged.copy()
     if classif_from_m3:
-        df_ROI_age_sex_site = pd.read_csv(ROOT+"df_ROI_age_sex_site_M00_M03"+str_WM+"_v4labels.csv")
+        df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03"+str_WM+"_v4labels.csv")
         df_ROI_age_sex_site = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"]
         df_ROI_age_sex_site = df_ROI_age_sex_site.drop(columns=["session"])
 
@@ -489,22 +480,22 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
 
     df_ROI_age_sex_site["y"] = df_ROI_age_sex_site["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
     df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
-    print(df_ROI_age_sex_site)
 
-    # Define residualization strategies
-    residualization_configs = {
-        "no_res": None,
-        "res_age_sex": "age + sex",
-        "res_age_sex_site": "age + sex + site"
-    }
+    # Define residualization strategies    
 
     # Define classifiers and their grid parameters
     if compute_and_save_shap:
+        residualization_configs = {"res_age_sex": "age + sex"}
         classifiers_config = {
             "svm": (svm.SVC(class_weight='balanced',probability=True), {
                 "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
             })}
     else:
+        residualization_configs = {
+            "no_res": None,
+            "res_age_sex": "age + sex",
+            "res_age_sex_site": "age + sex + site"
+        }
         classifiers_config = {
             "L2LR": (lm.LogisticRegression(class_weight='balanced', fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
             "svm": (svm.SVC(class_weight='balanced',probability=True), {
@@ -558,23 +549,23 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
     dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
 
     # stratification 
-    df_stratification = df_ROI_age_sex_site.copy()
-    df_stratification['age_bin'] = pd.qcut(df_stratification['age'], q=16, duplicates='drop')
-    # combine y, sex, and age_bin into a single stratification label
-    df_stratification['stratify_label'] = df_stratification['y'].astype(str) + '_' + \
-        df_stratification['sex'].astype(str) + '_' + df_stratification['age_bin'].astype(str)
-    kf = StratifiedKFold(n_splits=nbfolds, shuffle=True, random_state=seed)
-    
+    splitter = make_stratified_splitter(df = df_ROI_age_sex_site.copy(), cv_seed=seed, n_splits=nbfolds)
+
     if random_permutation: 
         np.random.seed(seed_label_permutations)
         y_arr = np.random.permutation(y_arr)
         if verbose : print("y_arr permuted :",y_arr)
 
-    for fold_idx, (train_index, test_index) in enumerate(kf.split(df_stratification, df_stratification['stratify_label'])):
-        classification_one_fold(fold_idx, X_arr, y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
+    misclassified_test_ids_all_folds=[]
+    for fold_idx, (train_index, test_index) in enumerate(splitter):
+        # print("fold ",fold_idx)        
+        misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr,train_index,test_index, df_ROI_age_sex_site , residualization_configs,\
                                     classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
-                                        compute_and_save_shap, verbose, binarize)
-
+                                        compute_and_save_shap, verbose=False, binarize=binarize)
+        misclassified_test_ids_all_folds.append(misclassified_test_ids)
+    
+    misclassified_test_ids_all_folds = np.concatenate(misclassified_test_ids_all_folds,axis=0)
+    
     # print(dict_cv_subjects,"\n\n")
     # print(dict_cv)
     
@@ -673,7 +664,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=1, ve
 
     # return mean for all classifiers and std ROC AUC with residualization on age, sex, site
     return round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].mean(),4),\
-        round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].std(),4)
+        round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].std(),4), misclassified_test_ids_all_folds
 
 
 def get_seed_with_lowest_std_in_roc_auc_between_folds():
@@ -888,7 +879,7 @@ def pls_regression(nb_components=3, significant_rois=None, \
         
         for residual_key, formula in residualization_configs.items():
             if formula:
-                print(f"Residualizing with: {formula}")
+                # print(f"Residualizing with: {formula}")
                 residualizer = Residualizer(
                     data=df_ROI_age_sex_site[["age", "sex", "site", "y"]],
                     formula_res=formula,
@@ -1137,12 +1128,14 @@ def print_performance_by_residualization_scheme(df_results, metric="roc_auc", st
     print(round(means_res_age_sex_site,4))
     if std : print(round(filtered_results_res_age_sex_site.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
     print("res age sex ")
-    print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_"+tr_or_te].mean(),4))
+    means_res_age_sex = filtered_results_res_age_sex.groupby("classifier")[metric+"_"+tr_or_te].mean()
+    print(round(means_res_age_sex,4))
     if std: print(round(filtered_results_res_age_sex.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
     print("no res")
-    print(round(filtered_results_nores.groupby("classifier")[metric+"_"+tr_or_te].mean(),4))
+    means_no_res = filtered_results_nores.groupby("classifier")[metric+"_"+tr_or_te].mean()
+    print(round(means_no_res,4))
     if std: print(round(filtered_results_nores.groupby("classifier")[metric+"_"+tr_or_te].std(),4))
-    return means_res_age_sex_site["svm"]
+    return means_res_age_sex["svm"]
 
 def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, biomarkers_roi=False, classif_from_17_roi=False):
@@ -1200,8 +1193,36 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
 def main():
 
     # to perform classification:
-    # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, print_pvals=True, binarize=False)
+    # list_all=[]
+    # for seed in range(21,30):
+    #     _,_,list_te_misclassified= classification(save_results=True, seed=seed, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
+    #                 print_pvals=True, binarize=False)
+        # list_all.append(list(list_te_misclassified))
+        
+    # common_strings = set(list_all[0])
+    # for lst in list_all[1:]:
+    #     common_strings &= set(lst)
+    # print("Strings in all ",len(list_all)," lists:", list(common_strings))
 
+    # ceux qui sont tjrs mal classifiés:
+    # Strings in all  30  lists: ['sub-75284', 'sub-77228', 'sub-32220', 'sub-43459', 'sub-22549', \
+    # 'sub-52346', 'sub-27002', 'sub-87487', 'sub-44928', 'sub-90396', 'sub-71090']
+
+    # new subject in v4 : ['sub-80793']
+
+
+    classification(save_results=True, seed=11, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
+               print_pvals=True, binarize=False)
+    quit()
+
+
+
+    # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
+    #                print_pvals=True, binarize=False, classif_from_differencem3m0=True)
+    
+    # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
+    #                print_pvals=True, binarize=False, classif_from_m3=True)
+    # quit()
     
     # 2 --> 70% , 57% bacc et 46% sensitivity (binarized : 73% , 62% bacc et 39% sensitivity)
     # 42 --> 69% , 61% bacc 47% sensitivity et (binarized : 69%, 65% bacc et 43% sensitivity)
@@ -1210,10 +1231,13 @@ def main():
     # 7 --> 68%
     # 8 --> 67%
     # 13 --> 69% (64% balanced accuracy)
+    
+
+    # for SHAP computation with random permutations
     """
     start_time = time.time()
-    for n in range(1,1001): 
-        classification(seed=13, compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
+    for n in range(501,1001): 
+        classification(seed=11, compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
     end_time = time.time()
     elapsed_time = end_time - start_time
     hours = int(elapsed_time // 3600)
@@ -1222,18 +1246,19 @@ def main():
     print(f"The function classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n) \
     took {hours}h {minutes}m {seconds}s to run.")
     """
-    
+
     # seed=2
-    df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(13)+"_GRvsPaRNR_5fold_v4labels.pkl")
-    print_performance_by_residualization_scheme(df, metric="roc_auc")
+    df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(11)+"_GRvsPaRNR_5fold_v4labels.pkl")
+    print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
+
     quit()
 
     bacc_res_age_sex_site_svm_best = 0
-    for seed in range(1,31):
+    for seed in range(30):
         print(seed)
         df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(seed)+"_GRvsPaRNR_5fold_v4labels.pkl")
         # print_performance_by_residualization_scheme(df, metric="roc_auc",std=True)
-        bacc_res_age_sex_site_svm = print_performance_by_residualization_scheme(df, metric="balanced_accuracy",tr_or_te = "train")
+        bacc_res_age_sex_site_svm = print_performance_by_residualization_scheme(df, metric="balanced_accuracy", tr_or_te = "train")
         if bacc_res_age_sex_site_svm >=bacc_res_age_sex_site_svm_best:
             bacc_res_age_sex_site_svm_best = bacc_res_age_sex_site_svm
             best_seed = seed

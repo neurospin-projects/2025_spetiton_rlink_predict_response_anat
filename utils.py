@@ -7,13 +7,16 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from nilearn import plotting, image
 import matplotlib.pyplot as plt
+from sklearn.model_selection import StratifiedKFold
+from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+
 from nilearn.image import resample_to_img
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer
+
 # inputs
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
 DATA_DIR=ROOT+"data/processed/"
-
 FILEM00_ROI = "df_ROI_age_sex_site_fevrier2025_M00_labels_as_strings.csv"
 FILEM00_M03_ROI = "df_ROI_age_sex_site_fevrier2025_M00_M03_labels_as_strings.csv"
 VOL_FILE_VBM = "/drf/local/spm12/tpm/labels_Neuromorphometrics.nii"
@@ -63,9 +66,11 @@ def get_lists_roi_in_both_openBHB_and_rlink():
 def strat_stats(subset, name):
     mean_age = subset['age'].mean()
     prop_female = subset['sex'].mean()  # sex==1 is female
+    sites = list(subset['site'].unique())
+    print("sites ",sites)
     print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}")
 
-def stratified_split(df_input, test_size=0.2, random_state=42, verbose=False):
+def stratified_split(df_input, test_size=0.2, random_state=42, verbose=True):
     # Bin continuous 'age' into quantiles for stratification
     df = df_input.copy()
     df['age_bin'] = pd.qcut(df['age'], q=3, duplicates='drop')
@@ -153,6 +158,20 @@ def binarization(X_train, X_test, y_train):
         X_test_bin[:, col] = (test_col > threshold).astype(float)
 
     return X_train_bin, X_test_bin
+
+def get_scores(pipeline,X_test_res, X_train_res):
+    if hasattr(pipeline, 'decision_function'):
+        score_test = pipeline.decision_function(X_test_res)
+        score_train = pipeline.decision_function(X_train_res)
+    elif hasattr(pipeline, 'predict_log_proba'):
+        score_test = pipeline.predict_log_proba(X_test_res)[:, 1]
+        score_train = pipeline.predict_log_proba(X_train_res)[:, 1]
+    elif hasattr(pipeline, 'predict_proba'):
+        score_test = pipeline.predict_proba(X_test_res)[:, 1]
+        score_train = pipeline.predict_proba(X_train_res)[:, 1]
+    else:
+        raise RuntimeError("There is an issue with the classifier.")
+    return score_test, score_train
 
 def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
     assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
@@ -463,3 +482,28 @@ def get_ROI_info_from_voxels(img=None):
     plotting.show()
     display.savefig('test.png')
 
+
+def make_stratified_splitter(df, n_splits=5, cv_seed=11, qbins=4):
+    """
+    Returns a generator yielding (train_idx, test_idx) for stratified folds,
+   
+    Parameters:
+        df (dataframe) : pandas df of roi values
+        n_splits (int): Number of splits.
+        cv_seed (int): Random seed for reproducibility.
+
+    Returns:
+        Generator of (train_idx, test_idx) for each fold.
+    """
+    df_strat = df.copy()
+    df_strat["y"] = df_strat["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
+    df_strat['age_bin'] = pd.qcut(df_strat["age"], q=qbins)
+    # print(df_strat[["age_bin", "sex", "site"]])
+
+    strat_df = pd.get_dummies(df_strat[["age_bin", "sex", "site","y"]])
+    strat_matrix = strat_df.values  
+    X = np.arange(len(df)) # for indexing (list [0 1 2 ... 116])
+
+    skf = MultilabelStratifiedKFold(n_splits=n_splits, shuffle=True, random_state=cv_seed)
+
+    yield from skf.split(X, strat_matrix)
