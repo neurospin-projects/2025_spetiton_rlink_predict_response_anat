@@ -5,18 +5,22 @@ import sklearn.linear_model as lm
 from xgboost import XGBClassifier 
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from joblib import Parallel, delayed
 import scipy, os, shap, joblib
 from sklearn.pipeline import make_pipeline
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
 from plots import plot_glassbrain
 from utils import binarization
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
-from pylearn_mulm.mulm.residualizer import Residualizer
-from utils import read_pkl, rename_col , get_rois, make_stratified_splitter, strat_stats, get_scores
+from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
+from utils import read_pkl, rename_col , get_rois, make_stratified_splitter, strat_stats, get_scores, save_pkl
+from nitk.ml_utils.cross_validation import PredefinedSplit
+from nitk.ml_utils.residualization import get_residualizer
 
 # inputs
 ROOT ="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
@@ -25,7 +29,7 @@ DF_ROI_M0=DATA_DIR+"df_ROI_age_sex_site_M00_v4labels.csv"
 DF_ROI_M3_MINUS_M0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv"
 DF_ROI_M3M0 = DATA_DIR+"df_ROI_age_sex_site_M00_M03_v4labels.csv"
 ATLAS_ROI_NAMES_DF = DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv"
-
+CV_DIR="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/models/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4/"
 # outputs
 RESULTS_DIR = ROOT+"reports/classification_results/"
 FEAT_IMPTCE_RES_DIR = ROOT+"reports/feature_importance_results/"
@@ -123,18 +127,17 @@ def initialize_results_dicts(nbfolds, residualization_configs, classifiers_confi
         for fold in range(nbfolds)
     }
 
-    shap_svm = {
+    shap_forest = {
         fold: {res_key: {}
             for res_key in residualization_configs.keys()}
         for fold in range(nbfolds)
     }
 
-    return dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm
-    
+    return dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest
 
 
 def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
-                                    classifiers_config, dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
+                                    classifiers_config, dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
                                         compute_and_save_shap, verbose, binarize=False): 
     
     
@@ -153,36 +156,46 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                                     "test_subjects_ids":df_ROI_age_sex_site["participant_id"].loc[test_index].values}
 
     for residual_key, formula in residualization_configs.items():
-        if formula:
+        if residual_key!="no_res":
+            # print("residual_key ", residual_key)
             # print(f"Residualizing with: {formula}")
-            residualizer = Residualizer(
-                data=df_ROI_age_sex_site[["age", "sex", "site", "y"]],
-                formula_res=formula,
-                formula_full=formula + " + y"
-            )
-            Zres = residualizer.get_design_mat(df_ROI_age_sex_site[["age", "sex", "site", "y"]])
-            Zres_train, Zres_test = Zres[train_index], Zres[test_index]
-            residualizer.fit(X_train, Zres_train)
-            X_train_res = residualizer.transform(X_train, Zres_train)
-            X_test_res = residualizer.transform(X_test, Zres_test)
+            X_arr_res, residualizer_estimator, residualization_formula = \
+                get_residualizer(df_ROI_age_sex_site, X_arr, residualization_columns=formula)
+            X_train_res, X_test_res = X_arr_res[train_index], X_arr_res[test_index]
+            
         # formula = None --> no residualization     
         else:
             X_train_res, X_test_res = X_train, X_test
 
         for classif_key, (estimator, param_grid) in classifiers_config.items():
-            # print("classif_key ",classif_key)
+            print("classif_key ",classif_key, " fold_idx ", fold_idx)
             if binarize : pipeline = make_pipeline(GridSearchCV(estimator=estimator, param_grid=param_grid, cv=5, n_jobs=1))
             else :
-                pipeline = make_pipeline(
-                    StandardScaler(),
-                    GridSearchCV(estimator=estimator, param_grid=param_grid, cv=5, n_jobs=1)
-                )
+                cv_val = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+                if residual_key!="no_res":
+                    pipeline = make_pipeline(
+                        residualizer_estimator,
+                        StandardScaler(),
+                        GridSearchCV(estimator=estimator, param_grid=param_grid,
+                            cv=cv_val, n_jobs=1)
+                    )
+                else: 
+                    pipeline = make_pipeline(
+                        StandardScaler(),
+                        GridSearchCV(estimator=estimator, param_grid=param_grid,
+                            cv=cv_val, n_jobs=1)
+                    )
             if binarize:
                 X_train_res, X_test_res = binarization(X_train_res, X_test_res, y_train)
-
+ 
             pipeline.fit(X_train_res, y_train)
+            print("predict")
             y_pred_test = pipeline.predict(X_test_res)
+            print("predict train")
+
             y_pred_train = pipeline.predict(X_train_res)
+            print("get scores")
 
             score_test, score_train = get_scores(pipeline, X_test_res, X_train_res)
                 
@@ -192,21 +205,36 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                 coefficients = best_lr.coef_[0] #best_lr.coef_ is an array of shape (1,268) so we keep only index 0
                 coefficients_L2LR[fold_idx][residual_key]=coefficients
             
-            if classif_key=="svm" and compute_and_save_shap: # compute shap
-                # runs in a few hours
-                background_data = X_train_res 
+            # if classif_key=="svm" and compute_and_save_shap: # compute shap
+            #     # runs in a few hours
+            #     background_data = X_train_res 
+            #     grid_search = pipeline.named_steps['gridsearchcv']
+            #     best_svm = grid_search.best_estimator_
+
+            #     explainer = shap.KernelExplainer(best_svm.decision_function, background_data)
+            #     # shap_values = explainer.shap_values(X_test_res)
+
+            #     shap_values = joblib.Parallel(n_jobs=20)(
+            #         joblib.delayed(explainer)(x) for x in tqdm(X_test_res)
+            #     )
+            #     shap_values = np.array([exp.values for exp in shap_values])
+
+            #     shap_svm[fold_idx][residual_key]=shap_values
+
+            if classif_key=="forestcv" and compute_and_save_shap: # compute shap
                 grid_search = pipeline.named_steps['gridsearchcv']
-                best_svm = grid_search.best_estimator_
+                best_forest = grid_search.best_estimator_
 
-                explainer = shap.KernelExplainer(best_svm.decision_function, background_data)
-                # shap_values = explainer.shap_values(X_test_res)
+                # TreeExplainer for random forests
+                explainer = shap.TreeExplainer(best_forest)
 
-                shap_values = joblib.Parallel(n_jobs=20)(
-                    joblib.delayed(explainer)(x) for x in tqdm(X_test_res)
-                )
-                shap_values = np.array([exp.values for exp in shap_values])
+                shap_values = explainer.shap_values(X_test_res)  # shape: (n_classes, n_samples, n_features)
 
-                shap_svm[fold_idx][residual_key]=shap_values
+                # If binary classification and you want just class 1
+                if isinstance(shap_values, list) and len(shap_values) == 2:
+                    shap_values = shap_values[1]
+
+                shap_forest[fold_idx][residual_key] = shap_values
 
 
             # Metrics
@@ -435,12 +463,11 @@ def classif_stacking():
     # print(round(df_results_m3minusm0["specificity_test"].mean(),4))
     # print(round(df_results_m3minusm0["sensitivity_test"].mean(),4))
 
-def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, verbose=True, \
+def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, seed_label_permutations=None, classif_from_WM_ROI = False, \
-                        biomarkers_roi=False, classif_from_17_roi=False, binarize=False):
+                        biomarkers_roi=False, classif_from_17_roi=False, binarize=False, class_weight=None):
     
-    # seed was 1 for v3 labels
     """
     print_pvals (bool) : whether to print p-values describing the classification significativity
     compute_and_save_shap (bool): whether to compute SHAP values, if True, runs only svm and saves only svm results
@@ -449,6 +476,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
     classif_from_differencem3m0 (bool) : True if classifying from the difference m3-m0
     classif_from_m3 (bool) : True if classifying from m3 ROI
     classif_from_WM_ROI (bool): True if classifying from white matter ROI VBM measures (instead of GM + CSF) 
+    class_weight: None (default) or "balanced" 
     """
     
     str_labels="_GRvsPaRNR"
@@ -485,24 +513,24 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
 
     # Define classifiers and their grid parameters
     if compute_and_save_shap:
-        residualization_configs = {"res_age_sex": "age + sex"}
+        residualization_configs = {"res_age_sex_site":["age", "sex", "site"]}
         classifiers_config = {
-            "svm": (svm.SVC(class_weight='balanced',probability=True), {
-                "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
-            })}
+            'forestcv': (RandomForestClassifier(random_state=1, class_weight=class_weight), {"n_estimators": [10, 100]})
+            }
     else:
         residualization_configs = {
             "no_res": None,
-            "res_age_sex": "age + sex",
-            "res_age_sex_site": "age + sex + site"
+            "res_age_sex": ["age", "sex"],
+            "res_age_sex_site": ["age", "sex", "site"]
         }
         classifiers_config = {
-            "L2LR": (lm.LogisticRegression(class_weight='balanced', fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
-            "svm": (svm.SVC(class_weight='balanced',probability=True), {
+            'forestcv': (RandomForestClassifier(random_state=1, class_weight=class_weight), {"n_estimators": [10, 100]}) ,
+            "L2LR": (lm.LogisticRegression(class_weight=class_weight, fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
+            "svm": (svm.SVC(class_weight=class_weight,probability=True), {
                 "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
             }),
             "EN": (lm.SGDClassifier(
-                loss='log_loss', penalty='elasticnet', class_weight='balanced',random_state=42),{
+                loss='log_loss', penalty='elasticnet', class_weight=class_weight,random_state=42),{
                 "alpha": 10.0 ** np.arange(-1, 2),
                 "l1_ratio": [0.1, 0.5, 0.9]
             }),
@@ -545,11 +573,11 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
         print("np.shape(y)",np.shape(y_arr), type(y_arr))
         print("y nb of 0 labels ",(y_arr == 0).sum(), ", 1 labels ", (y_arr == 1).sum())
 
-    print("seed for CV : ",seed)
-    dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
+    dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
 
     # stratification 
-    splitter = make_stratified_splitter(df = df_ROI_age_sex_site.copy(), cv_seed=seed, n_splits=nbfolds)
+    cv_test = PredefinedSplit(json_file=CV_DIR+'supervised_classification_config_cv5test.json')
+
 
     if random_permutation: 
         np.random.seed(seed_label_permutations)
@@ -557,10 +585,10 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
         if verbose : print("y_arr permuted :",y_arr)
 
     misclassified_test_ids_all_folds=[]
-    for fold_idx, (train_index, test_index) in enumerate(splitter):
+    for fold_idx, (train_index, test_index) in enumerate(cv_test.split()):
         # print("fold ",fold_idx)        
-        misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr,train_index,test_index, df_ROI_age_sex_site , residualization_configs,\
-                                    classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_svm,\
+        misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr, train_index, test_index, df_ROI_age_sex_site , residualization_configs,\
+                                    classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
                                         compute_and_save_shap, verbose=False, binarize=binarize)
         misclassified_test_ids_all_folds.append(misclassified_test_ids)
     
@@ -585,8 +613,8 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
 
     if save_results :
         if not df_results.empty: 
-            df_results.to_pickle(RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
-            print("df_results saved to : ",RESULTS_DIR+'results_classification_seed_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
+            df_results.to_pickle(RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
+            print("df_results saved to : ",RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
 
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
@@ -599,26 +627,26 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, seed=13, v
     df_coeffsL2LR = pd.DataFrame.from_dict(coefficients_L2LR, orient="index").reset_index()
     df_coeffsL2LR.rename(columns={"index": "fold"}, inplace=True)
 
-    # convert shap_svm dict to dataframe
+    # convert shap_forest dict to dataframe
     if compute_and_save_shap : 
-        df_shap_svm = pd.DataFrame.from_dict(shap_svm, orient="index").reset_index()
-        df_shap_svm.rename(columns={"index": "fold"}, inplace=True)
-        print("df_shap_svm:\n",df_shap_svm)
+        df_shap_forest = pd.DataFrame.from_dict(shap_forest, orient="index").reset_index()
+        df_shap_forest.rename(columns={"index": "fold"}, inplace=True)
+        print("df_shap_forest:\n",df_shap_forest)
 
     
     if save_results :
         if not df_coeffsL2LR.empty : 
-            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients_'+str(seed)+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'.pkl')
-        # if dict_cv_subjects : 
-        #     save_pkl(dict_cv_subjects,ROOT+'subjects_by_fold/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_seed_'+str(seed)+str_diff+str_WM+str_rois+'_v4labels'+str_bin+".pkl")
+            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
+        if dict_cv_subjects : 
+            save_pkl(dict_cv_subjects,ROOT+'reports/folds_CV/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+"_CV_Edouard.pkl")
     
 
-    if compute_and_save_shap and not df_shap_svm.empty : 
+    if compute_and_save_shap and not df_shap_forest.empty : 
         if random_permutation: 
-            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold_random_permutations_with_seed_"+\
-                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+".pkl")
+            df_shap_forest.to_pickle(FEAT_IMPTCE_RES_DIR+'forest_shap'+str_labels+"_"+str(nbfolds)+"fold_random_permutations_with_seed_"+\
+                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+"_CV_Edouard.pkl")
         else : 
-            df_shap_svm.to_pickle(FEAT_IMPTCE_RES_DIR+'svm_shap_seed'+str(seed)+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+".pkl")
+            df_shap_forest.to_pickle(FEAT_IMPTCE_RES_DIR+'forest_shap'+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+"_CV_Edouard.pkl")
 
     if verbose :
         print("residualization age+sex+site mean roc auc and std :",round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].mean(),4),\
@@ -1189,32 +1217,36 @@ def plot_L2LR_weights(seed=1,nbfolds=5,classif_from_WM_ROI=False,classif_from_di
     print(dict_weights)
     plot_glassbrain(dict_plot=dict_weights, title="mean L2LR weights over 5 CV folds")
     
+def run_random_permutations_shap():
+    """
+      parallel SHAP computation with random permutations of labels
+    """
+
+    # Wrap the function call
+    def run_classification(n):
+        classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
+
+    start_time = time.time()
+
+    # Run in parallel using all available cores (n_jobs=-1)
+    Parallel(n_jobs=-1)(
+        delayed(run_classification)(n) for n in range(0, 1001)
+    )
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = int(elapsed_time % 60)
+
+    print(f"The parallel classification() run took {hours}h {minutes}m {seconds}s.")
+    # The parallel classification() run took 0h 12m 56s.
 
 def main():
 
     # to perform classification:
-    # list_all=[]
-    # for seed in range(21,30):
-    #     _,_,list_te_misclassified= classification(save_results=True, seed=seed, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
-    #                 print_pvals=True, binarize=False)
-        # list_all.append(list(list_te_misclassified))
-        
-    # common_strings = set(list_all[0])
-    # for lst in list_all[1:]:
-    #     common_strings &= set(lst)
-    # print("Strings in all ",len(list_all)," lists:", list(common_strings))
-
-    # ceux qui sont tjrs mal classifiés:
-    # Strings in all  30  lists: ['sub-75284', 'sub-77228', 'sub-32220', 'sub-43459', 'sub-22549', \
-    # 'sub-52346', 'sub-27002', 'sub-87487', 'sub-44928', 'sub-90396', 'sub-71090']
-
+    # classification(save_results=True, print_pvals=True)
     # new subject in v4 : ['sub-80793']
-
-
-    classification(save_results=True, seed=11, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
-               print_pvals=True, binarize=False)
-    quit()
-
 
 
     # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
@@ -1224,57 +1256,18 @@ def main():
     #                print_pvals=True, binarize=False, classif_from_m3=True)
     # quit()
     
-    # 2 --> 70% , 57% bacc et 46% sensitivity (binarized : 73% , 62% bacc et 39% sensitivity)
-    # 42 --> 69% , 61% bacc 47% sensitivity et (binarized : 69%, 65% bacc et 43% sensitivity)
-    # 5 --> 68%
-    # 6 --> 65%
-    # 7 --> 68%
-    # 8 --> 67%
-    # 13 --> 69% (64% balanced accuracy)
     
-
-    # for SHAP computation with random permutations
-    """
-    start_time = time.time()
-    for n in range(501,1001): 
-        classification(seed=11, compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n)
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    hours = int(elapsed_time // 3600)
-    minutes = int((elapsed_time % 3600) // 60)
-    seconds = int(elapsed_time % 60)
-    print(f"The function classification(compute_and_save_shap=True, random_permutation=True, seed_label_permutations=n) \
-    took {hours}h {minutes}m {seconds}s to run.")
-    """
-
-    # seed=2
-    df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(11)+"_GRvsPaRNR_5fold_v4labels.pkl")
-    print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
-
-    quit()
-
-    bacc_res_age_sex_site_svm_best = 0
-    for seed in range(30):
-        print(seed)
-        df= read_pkl(RESULTS_DIR + "results_classification_seed_"+str(seed)+"_GRvsPaRNR_5fold_v4labels.pkl")
-        # print_performance_by_residualization_scheme(df, metric="roc_auc",std=True)
-        bacc_res_age_sex_site_svm = print_performance_by_residualization_scheme(df, metric="balanced_accuracy", tr_or_te = "train")
-        if bacc_res_age_sex_site_svm >=bacc_res_age_sex_site_svm_best:
-            bacc_res_age_sex_site_svm_best = bacc_res_age_sex_site_svm
-            best_seed = seed
-    print("\nbest: ",round(bacc_res_age_sex_site_svm_best,4))
-    print("seed : ",best_seed)
-
-    # print_performance_by_residualization_scheme(df, metric="specificity")
-    # print_performance_by_residualization_scheme(df, metric="sensitivity")
-    
-
+    classification(compute_and_save_shap=True, random_permutation=False)
 
     quit()
     
+
+
+    # df= read_pkl(RESULTS_DIR + "results_classification_GRvsPaRNR_5fold_v4labels_CV_Edouard.pkl")
+    # print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
+        
     # to plot logistic regression weights with 17 rois:
     # plot_L2LR_weights(classif_from_17_roi=True)
-
 
     # to execute PLS regression with 17 ROIs selected with SHAP 
     # and get the plots 
