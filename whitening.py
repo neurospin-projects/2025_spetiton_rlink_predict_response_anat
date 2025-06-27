@@ -2,77 +2,6 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-# class WhiteningTransformer(BaseEstimator, TransformerMixin):
-#     def __init__(self, method='zca', eps=1e-5):
-#         assert method in ['zca', 'full', None], "method must be 'zca', 'full', or None"
-#         self.method = method
-#         self.eps = eps
-
-#     def fit(self, X, y=None):
-
-#         if self.method is None:
-#             return self
-        
-#         # Center data
-#         self.mean_ = np.mean(X, axis=0)
-#         X_centered = X - self.mean_
-        
-#         # Covariance
-#         cov = np.cov(X_centered, rowvar=False)
-        
-#         # Eigen decomposition
-#         eigvals, eigvecs = np.linalg.eigh(cov)
-#         self.eigvals_ = eigvals
-#         self.eigvecs_ = eigvecs
-
-#         # Whitening matrix
-#         D_inv_sqrt = np.diag(1.0 / np.sqrt(eigvals + self.eps))
-#         if self.method == 'full':
-#             self.whitening_matrix_ = D_inv_sqrt @ eigvecs.T
-#         else:  # ZCA
-#             self.whitening_matrix_ = eigvecs @ D_inv_sqrt @ eigvecs.T
-
-#         return self
-
-#     def transform(self, X, y=None):
-#         if self.method is None:
-#             return X
-        
-#         X_centered = X - self.mean_
-#         return X_centered @ self.whitening_matrix_.T
-
-
-# class RegularizedWhiteningTransformer(BaseEstimator, TransformerMixin):
-#     def __init__(self, lambda_val=0.1):
-#         self.lambda_val = lambda_val
-#         self.mean_ = None
-#         self.whitening_matrix_ = None
-#         self.inv_whitening_matrix_ = None
-
-#     def fit(self, X, y=None):
-#         self.mean_ = X.mean(axis=0)
-#         X_centered = X - self.mean_
-
-#         cov = np.cov(X_centered, rowvar=False)
-#         reg_cov = (1 - self.lambda_val) * cov + self.lambda_val * np.eye(cov.shape[0])
-
-#         eigvals, eigvecs = np.linalg.eigh(reg_cov)
-#         eigvals = np.clip(eigvals, 1e-10, None)  # numerical stability
-
-#         # Whitening matrix: W = eigvecs * diag(1/sqrt(eigvals)) * eigvecs.T
-#         D_inv_sqrt = np.diag(1.0 / np.sqrt(eigvals))
-#         self.whitening_matrix_ = eigvecs @ D_inv_sqrt @ eigvecs.T
-#         self.inv_whitening_matrix_ = eigvecs @ np.diag(np.sqrt(eigvals)) @ eigvecs.T
-
-#         return self
-
-#     def transform(self, X):
-#         X_centered = X - self.mean_
-#         return X_centered @ self.whitening_matrix_.T
-
-#     def inverse_transform_weights(self, weights):
-#         return self.inv_whitening_matrix_.T @ weights
     
 
 class PairwiseWhiteningTransformer(BaseEstimator, TransformerMixin):
@@ -118,13 +47,11 @@ class PairwiseWhiteningTransformer(BaseEstimator, TransformerMixin):
                 # Whitening matrix: W = U diag(1/sqrt(S + epsilon)) U^T
                 W = U @ np.diag(1. / np.sqrt(S + epsilon)) @ U.T
                 det = np.linalg.det(W)
-                print("condition :",np.linalg.cond(W) )
-                print("Determinant:", det)
-                if det ==0: 
-                    print(det)
-                    quit()
+                # print("condition :",np.linalg.cond(W) )
+                # print("Determinant:", det)
+                # if det ==0: 
+                #     print(det)
 
-    
 
             elif self.method == "full":
                 # Full whitening via eigendecomposition:
@@ -209,11 +136,11 @@ class PartialWhiteningTransformer(BaseEstimator, TransformerMixin):
             if self.method == 'zca':
                 U, S, _ = np.linalg.svd(cov_reg)
                 W = U @ np.diag(1. / np.sqrt(S + epsilon)) @ U.T
-                det = np.linalg.det(W)
-                print("condition :",np.linalg.cond(W) )
-                if det ==0: 
-                    print(det)
-                    quit()
+                # det = np.linalg.det(W)
+                # print("condition :",np.linalg.cond(W) )
+                # if det ==0: 
+                #     print(det)
+                #     quit()
             elif self.method == 'full':
                 eigvals, eigvecs = np.linalg.eigh(cov_reg)
                 W = eigvecs @ np.diag(1. / np.sqrt(eigvals + epsilon)) @ eigvecs.T
