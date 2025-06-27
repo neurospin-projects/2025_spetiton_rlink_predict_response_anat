@@ -8,17 +8,20 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from joblib import Parallel, delayed
 import scipy, os, shap, joblib
+import seaborn as sns
 from sklearn.pipeline import make_pipeline
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
+from whitening import PairwiseWhiteningTransformer, PartialWhiteningTransformer
 from plots import plot_glassbrain
 from utils import binarization
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
-from utils import read_pkl, rename_col , get_rois, make_stratified_splitter, strat_stats, get_scores, save_pkl
+from utils import read_pkl, rename_col , get_rois, make_stratified_splitter, strat_stats, get_scores, save_pkl, get_pair_dict_CSF_GM, make_lr_pairs,\
+plot_umap, get_bootstrapping_tr_te, plot_feature_pair_before_after
 from nitk.ml_utils.cross_validation import PredefinedSplit
 from nitk.ml_utils.residualization import get_residualizer
 
@@ -29,7 +32,7 @@ DF_ROI_M0=DATA_DIR+"df_ROI_age_sex_site_M00_v4labels.csv"
 DF_ROI_M3_MINUS_M0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv"
 DF_ROI_M3M0 = DATA_DIR+"df_ROI_age_sex_site_M00_M03_v4labels.csv"
 ATLAS_ROI_NAMES_DF = DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv"
-CV_DIR="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/models/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4/"
+CV_DIR="/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/edouard/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4_task-predLiResp/"
 # outputs
 RESULTS_DIR = ROOT+"reports/classification_results/"
 FEAT_IMPTCE_RES_DIR = ROOT+"reports/feature_importance_results/"
@@ -136,15 +139,49 @@ def initialize_results_dicts(nbfolds, residualization_configs, classifiers_confi
     return dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest
 
 
+def plot_covariance(X, title='Covariance matrix'):
+    cov = np.cov(X, rowvar=False)
+    feature_names =  get_rois() #[roi for roi in list(df.columns) if roi.endswith("_CSF_Vol") or roi.endswith("_GM_Vol")]
+    dfcov = pd.DataFrame(cov, index = feature_names, columns=feature_names)
+    vmax = np.abs(dfcov.values).max() # for symmetric color scale
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(dfcov, cmap='coolwarm', center=0, vmin=-vmax, vmax=vmax, xticklabels=feature_names, yticklabels=feature_names)
+    plt.title(title)
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+    plt.xlabel('ROIs')
+    plt.ylabel('ROIs')
+    plt.tight_layout()
+    plt.show()
+    # plt.savefig(title+".png", dpi=300)
+
+def plot_correlation(X, title='Correlation matrix'):
+    corr = np.corrcoef(X, rowvar=False)
+    feature_names =  get_rois()
+    dfcorr = pd.DataFrame(corr, index = feature_names, columns=feature_names)
+    vmax = np.abs(dfcorr.values).max() # for symmetric color scale
+    print(" vmax ",vmax)
+    print(dfcorr)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(dfcorr, cmap='coolwarm', center=0, vmin=-1, vmax=1)
+    plt.title(title)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.show()
+    # plt.savefig(title.replace(" ","_")+".png", dpi=300)
+ 
+
+
 def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_age_sex_site , residualization_configs,\
                                     classifiers_config, dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
-                                        compute_and_save_shap, verbose, binarize=False): 
+                                        compute_and_save_shap, verbose, binarize=False, whitening=None): 
     
     
-
     # Split data
     X_train, X_test = X_arr[train_index], X_arr[test_index]
     y_train, y_test = y_arr[train_index], y_arr[test_index]
+    # plot_umap(X_train)
+
     if verbose : 
         print(len(train_index), len(test_index))
         print("y_train nb of 0 labels ",(y_train == 0).sum(), ", 1 labels ", (y_train == 1).sum())
@@ -159,13 +196,24 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
         if residual_key!="no_res":
             # print("residual_key ", residual_key)
             # print(f"Residualizing with: {formula}")
+            # plot_correlation(X_train, title="Correlation Before Whitening")
+
             X_arr_res, residualizer_estimator, residualization_formula = \
                 get_residualizer(df_ROI_age_sex_site, X_arr, residualization_columns=formula)
+
             X_train_res, X_test_res = X_arr_res[train_index], X_arr_res[test_index]
+            X_train_classif, X_test_classif = X_train_res, X_test_res
             
+            print(np.shape(X_train_res))
+            X_train_resid = residualizer_estimator.fit_transform(X_train_res)
+            print(np.shape(X_train_resid))
+            # plot_umap(X_train_resid, title="UMAP residualized Xtrain")
+
+            # plot_correlation(X_train_resid, title="Correlation Before Whitening after residualization")
+
         # formula = None --> no residualization     
         else:
-            X_train_res, X_test_res = X_train, X_test
+            X_train_classif, X_test_classif = X_train, X_test
 
         for classif_key, (estimator, param_grid) in classifiers_config.items():
             print("classif_key ",classif_key, " fold_idx ", fold_idx)
@@ -174,52 +222,99 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                 cv_val = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
                 if residual_key!="no_res":
-                    pipeline = make_pipeline(
-                        residualizer_estimator,
-                        StandardScaler(),
-                        GridSearchCV(estimator=estimator, param_grid=param_grid,
-                            cv=cv_val, n_jobs=1)
-                    )
+                    if whitening:
+                        pipeline = make_pipeline(
+                            residualizer_estimator,
+                            PairwiseWhiteningTransformer(pair_dict=get_pair_dict_CSF_GM(), method="zca", whiten=whitening),
+                            PartialWhiteningTransformer(groups=make_lr_pairs(), lambda_reg=0.1, method='zca', whiten=whitening),
+                            StandardScaler(),
+                            GridSearchCV(estimator=estimator, param_grid=param_grid,
+                                cv=cv_val, n_jobs=1)
+                        )
+                    else : 
+                        pipeline = make_pipeline(residualizer_estimator, StandardScaler(), GridSearchCV(estimator=estimator, param_grid=param_grid, cv=cv_val, n_jobs=1))
                 else: 
-                    pipeline = make_pipeline(
-                        StandardScaler(),
-                        GridSearchCV(estimator=estimator, param_grid=param_grid,
-                            cv=cv_val, n_jobs=1)
-                    )
-            if binarize:
-                X_train_res, X_test_res = binarization(X_train_res, X_test_res, y_train)
- 
-            pipeline.fit(X_train_res, y_train)
-            print("predict")
-            y_pred_test = pipeline.predict(X_test_res)
-            print("predict train")
+                    if whitening:
+                        pipeline = make_pipeline(
+                            PairwiseWhiteningTransformer(pair_dict=get_pair_dict_CSF_GM(), method="zca", whiten=whitening),
+                            PartialWhiteningTransformer(groups=make_lr_pairs(), lambda_reg=0.1, method='zca', whiten=whitening),
+                            StandardScaler(),
+                            GridSearchCV(estimator=estimator, param_grid=param_grid,
+                                cv=cv_val, n_jobs=1)
+                        )
+                    else: pipeline = make_pipeline(StandardScaler(), GridSearchCV(estimator=estimator, param_grid=param_grid, cv=cv_val, n_jobs=1))
 
-            y_pred_train = pipeline.predict(X_train_res)
+            if binarize:
+                X_train_classif, X_test_classif = binarization(X_train_res, X_test_res, y_train)
+            
+            
+            pipeline.fit(X_train_classif, y_train)
+            print("predict")
+            y_pred_test = pipeline.predict(X_test_classif)
+            print("predict train")
+            y_pred_train = pipeline.predict(X_train_classif)
             print("get scores")
 
-            score_test, score_train = get_scores(pipeline, X_test_res, X_train_res)
+            score_test, score_train = get_scores(pipeline, X_test_classif, X_train_classif)
                 
             if classif_key=="L2LR": # get coefficients of L2LR 
                 grid_search = pipeline.named_steps['gridsearchcv']
                 best_lr = grid_search.best_estimator_
-                coefficients = best_lr.coef_[0] #best_lr.coef_ is an array of shape (1,268) so we keep only index 0
+                coefficients = best_lr.coef_[0] # best_lr.coef_ is an array of shape (1,268) so we keep only index 0
+                print("coefficients ",np.shape(coefficients))
+
+                if whitening:
+                    pairwise_whitener = pipeline.named_steps['pairwisewhiteningtransformer']
+                    partial_whitener = pipeline.named_steps['partialwhiteningtransformer']
+
+                    # get X_train in latent space (residualized and whitened)
+                    if residual_key!="no_res": X_pairwise_whitened = pairwise_whitener.transform(X_train_resid)
+                    else : X_pairwise_whitened = pairwise_whitener.transform(X_train)
+                    X_train_whitened = partial_whitener.transform(X_pairwise_whitened)
+
+                    # plot_feature_pair_before_after("Right Amygdala", X_train_resid, X_train_whitened,CSF_GM=True,title_suffix=" GM vs CSF ")
+                    # plot_feature_pair_before_after("Amygdala_CSF_Vol", X_train_resid, X_train_whitened, RL= True, title_suffix=" Right vs Left ")
+
+                    # plot_correlation(X_train_whitened, title="Correlation After Whitening")
+                    # if residual_key!="no_res":  plot_umap(X_train_whitened, title="UMAP whitened and residualized Xtrain")
+
+                    # get weights in feature space
+                    w_after_partial_inv = partial_whitener.inverse_transform_weights(coefficients)
+                    w_feat_space = pairwise_whitener.inverse_transform_coefficients(w_after_partial_inv)
+                    
+                    # colors = ['dodgerblue' if name.endswith('_GM_Vol') else 'tomato' for name in get_rois()]
+                    # x = np.arange(268)
+                    # plt.figure(figsize=(12, 6))
+                    # plt.scatter(x, coefficients, label="Before (whitened space)", marker='o', alpha=0.6, c=colors)
+                    # plt.scatter(x, w_feat_space, label="After inverse transform", marker='x', alpha=0.6, c=colors)
+                    # plt.axhline(0, color='black', linestyle='--', linewidth=0.5)
+                    # plt.title("Weights Before and After Whitening Transform")
+                    # plt.xlabel("Feature Index")
+                    # plt.ylabel("Weight Value")
+                    # plt.legend()
+                    # plt.tight_layout()
+                    # plt.savefig("weights_before_after_whitening_transpose.png", dpi=300)
+                    # plt.close()
+                    # quit()
+
+                    coefficients= w_feat_space
+
+
+
                 coefficients_L2LR[fold_idx][residual_key]=coefficients
             
-            # if classif_key=="svm" and compute_and_save_shap: # compute shap
-            #     # runs in a few hours
-            #     background_data = X_train_res 
-            #     grid_search = pipeline.named_steps['gridsearchcv']
-            #     best_svm = grid_search.best_estimator_
-
-            #     explainer = shap.KernelExplainer(best_svm.decision_function, background_data)
-            #     # shap_values = explainer.shap_values(X_test_res)
-
-            #     shap_values = joblib.Parallel(n_jobs=20)(
-            #         joblib.delayed(explainer)(x) for x in tqdm(X_test_res)
-            #     )
-            #     shap_values = np.array([exp.values for exp in shap_values])
-
-            #     shap_svm[fold_idx][residual_key]=shap_values
+            if classif_key=="svm" and compute_and_save_shap: # compute shap
+                # runs in a few hours
+                background_data = X_train_classif 
+                grid_search = pipeline.named_steps['gridsearchcv']
+                best_svm = grid_search.best_estimator_
+                explainer = shap.KernelExplainer(best_svm.decision_function, background_data)
+                # shap_values = explainer.shap_values(X_test_classif)
+                shap_values = joblib.Parallel(n_jobs=20)(
+                    joblib.delayed(explainer)(x) for x in tqdm(X_test_classif)
+                )
+                shap_values = np.array([exp.values for exp in shap_values])
+                shap_svm[fold_idx][residual_key]=shap_values
 
             if classif_key=="forestcv" and compute_and_save_shap: # compute shap
                 grid_search = pipeline.named_steps['gridsearchcv']
@@ -227,13 +322,12 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
 
                 # TreeExplainer for random forests
                 explainer = shap.TreeExplainer(best_forest)
+                # unpack design matrix from X_test_classif (the packing/unpacking is dealt with within the pipeline otherwise for classification)
+                # keep only X_test from unpacked [Z, X]
+                _, X_test_unpacked = residualizer_estimator.upack(X_test_classif)
 
-                shap_values = explainer.shap_values(X_test_res)  # shape: (n_classes, n_samples, n_features)
-
-                # If binary classification and you want just class 1
-                if isinstance(shap_values, list) and len(shap_values) == 2:
-                    shap_values = shap_values[1]
-
+                shap_values = explainer.shap_values(X_test_unpacked)[1]  # shape: (n_classes, n_samples, n_features) --> [1] to get shap values for positive class (GR)
+    
                 shap_forest[fold_idx][residual_key] = shap_values
 
 
@@ -463,10 +557,13 @@ def classif_stacking():
     # print(round(df_results_m3minusm0["specificity_test"].mean(),4))
     # print(round(df_results_m3minusm0["sensitivity_test"].mean(),4))
 
+
+
 def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=True, \
                    compute_and_save_shap=False, random_permutation=False, classif_from_differencem3m0=False,\
                       classif_from_concat=False, classif_from_m3=False, seed_label_permutations=None, classif_from_WM_ROI = False, \
-                        biomarkers_roi=False, classif_from_17_roi=False, binarize=False, class_weight=None):
+                        biomarkers_roi=False, classif_from_17_roi=False, binarize=False, class_weight="balanced", whitening=False, cv_seed=42,\
+                            bootstrapping=False):
     
     """
     print_pvals (bool) : whether to print p-values describing the classification significativity
@@ -477,6 +574,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
     classif_from_m3 (bool) : True if classifying from m3 ROI
     classif_from_WM_ROI (bool): True if classifying from white matter ROI VBM measures (instead of GM + CSF) 
     class_weight: None (default) or "balanced" 
+    whitening : False (default) or True
     """
     
     str_labels="_GRvsPaRNR"
@@ -524,30 +622,30 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
             "res_age_sex_site": ["age", "sex", "site"]
         }
         classifiers_config = {
-            'forestcv': (RandomForestClassifier(random_state=1, class_weight=class_weight), {"n_estimators": [10, 100]}) ,
-            "L2LR": (lm.LogisticRegression(class_weight=class_weight, fit_intercept=False), {"C": [0.1, 1.0, 10.0]}), 
-            "svm": (svm.SVC(class_weight=class_weight,probability=True), {
-                "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
-            }),
-            "EN": (lm.SGDClassifier(
-                loss='log_loss', penalty='elasticnet', class_weight=class_weight,random_state=42),{
-                "alpha": 10.0 ** np.arange(-1, 2),
-                "l1_ratio": [0.1, 0.5, 0.9]
-            }),
-            "MLP": (MLPClassifier(random_state=1), {
-                "hidden_layer_sizes": [
-                    (100,), (50,), (25,), (10,), (5,),
-                    (100, 50), (50, 25), (25, 10), (10, 5),
-                    (100, 50, 25), (50, 25, 10), (25, 10, 5)
-                ],
-                "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]
-            }),
-            "xgboost": (XGBClassifier(random_state=42, n_jobs=1), {
-                "n_estimators": [10, 30, 50],
-                "learning_rate": [0.05, 0.1],
-                "max_depth": [3, 6],
-                "subsample": [0.8]
-            })
+            # 'forestcv': (RandomForestClassifier(random_state=1, class_weight=class_weight), {"n_estimators": [10, 100]}) ,
+            "L2LR": (lm.LogisticRegression(class_weight=class_weight , fit_intercept=False), {"C": [0.1, 1.0, 10.0]}) #,
+            # "svm": (svm.SVC(class_weight=class_weight,probability=True), {
+            #     "kernel": ["rbf"], "gamma": ["scale"], "C": [0.1, 1.0, 10.0]
+            # }),
+            # "EN": (lm.SGDClassifier(
+            #     loss='log_loss', penalty='elasticnet', class_weight=class_weight,random_state=42),{
+            #     "alpha": 10.0 ** np.arange(-1, 2),
+            #     "l1_ratio": [0.1, 0.5, 0.9]
+            # }),
+            # "MLP": (MLPClassifier(random_state=1), {
+            #     "hidden_layer_sizes": [
+            #         (100,), (50,), (25,), (10,), (5,),
+            #         (100, 50), (50, 25), (25, 10), (10, 5),
+            #         (100, 50, 25), (50, 25, 10), (25, 10, 5)
+            #     ],
+            #     "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]
+            # }),
+            # "xgboost": (XGBClassifier(random_state=42, n_jobs=1), {
+            #     "n_estimators": [10, 30, 50],
+            #     "learning_rate": [0.05, 0.1],
+            #     "max_depth": [3, 6],
+            #     "subsample": [0.8]
+            # })
         }
 
     if classif_from_concat: 
@@ -573,31 +671,56 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
         print("np.shape(y)",np.shape(y_arr), type(y_arr))
         print("y nb of 0 labels ",(y_arr == 0).sum(), ", 1 labels ", (y_arr == 1).sum())
 
+    if bootstrapping : nbfolds=1000
     dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest = initialize_results_dicts(nbfolds, residualization_configs, classifiers_config)
 
     # stratification 
-    cv_test = PredefinedSplit(json_file=CV_DIR+'supervised_classification_config_cv5test.json')
+    cv_test = PredefinedSplit(json_file=CV_DIR+'20_ml-classifLiResp_cv-5cv.json').split()
 
+    # df = df_ROI_age_sex_site.copy()
+    # cv_test = make_stratified_splitter(df, n_splits=5, cv_seed=11)
 
+    # cv_test = StratifiedKFold(n_splits=5, shuffle=True, random_state=cv_seed).split(X_arr, y_arr) --> tests sur whitening done with this
+ 
     if random_permutation: 
         np.random.seed(seed_label_permutations)
         y_arr = np.random.permutation(y_arr)
         if verbose : print("y_arr permuted :",y_arr)
 
     misclassified_test_ids_all_folds=[]
-    for fold_idx, (train_index, test_index) in enumerate(cv_test.split()):
-        # print("fold ",fold_idx)        
-        misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr, train_index, test_index, df_ROI_age_sex_site , residualization_configs,\
-                                    classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
-                                        compute_and_save_shap, verbose=False, binarize=binarize)
-        misclassified_test_ids_all_folds.append(misclassified_test_ids)
-    
-    misclassified_test_ids_all_folds = np.concatenate(misclassified_test_ids_all_folds,axis=0)
+
+    if bootstrapping :
+        indices_nonresponders = df_ROI_age_sex_site.index[df_ROI_age_sex_site["y"] == 0].tolist()
+        indices_goodresponders = df_ROI_age_sex_site.index[df_ROI_age_sex_site["y"] == 1].tolist()
+        
+        for fold_idx in range(1000):
+            train_index, test_index = get_bootstrapping_tr_te(
+                indices_nonresponders, indices_goodresponders, seed=fold_idx
+            )
+            # print("fold ",fold_idx)        
+            misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr, train_index, test_index, df_ROI_age_sex_site , residualization_configs,\
+                                        classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
+                                            compute_and_save_shap, verbose=False, binarize=binarize, whitening=whitening)
+            misclassified_test_ids_all_folds.append(misclassified_test_ids)
+        misclassified_test_ids_all_folds = np.concatenate(misclassified_test_ids_all_folds, axis=0)
+            
+        
+
+
+    else:
+        for fold_idx, (train_index, test_index) in enumerate(cv_test):
+            # print("fold ",fold_idx)        
+            misclassified_test_ids = classification_one_fold(fold_idx, X_arr, y_arr, train_index, test_index, df_ROI_age_sex_site , residualization_configs,\
+                                        classifiers_config,  dict_cv, dict_cv_subjects, coefficients_L2LR, shap_forest,\
+                                            compute_and_save_shap, verbose=False, binarize=binarize, whitening=whitening)
+            misclassified_test_ids_all_folds.append(misclassified_test_ids)
+        misclassified_test_ids_all_folds = np.concatenate(misclassified_test_ids_all_folds, axis=0)
     
     # print(dict_cv_subjects,"\n\n")
-    # print(dict_cv)
+    print(dict_cv)
     
     df_results = create_df_from_dict(dict_cv)
+    print(df_results)
 
 
     if classif_from_differencem3m0: str_diff="_difference_m3m0"
@@ -606,16 +729,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
         if classif_from_m3: str_diff="_m3"
         else: str_diff = ""
 
-    str_rois = ""
-    if classif_from_17_roi : str_rois = "_17rois_only" 
-    if biomarkers_roi : str_rois="_bilateralHippo_and_Amyg_only"
-    str_bin= "_binarized_roi" if binarize else ""
-
-    if save_results :
-        if not df_results.empty: 
-            df_results.to_pickle(RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
-            print("df_results saved to : ",RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
-
+       
     filtered_results_res_age_sex_site = df_results[df_results["residualization"]=="res_age_sex_site"]
     filtered_results_res_age_sex = df_results[df_results["residualization"]=="res_age_sex"]
     filtered_results_nores = df_results[df_results["residualization"]=="no_res"]
@@ -633,20 +747,32 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
         df_shap_forest.rename(columns={"index": "fold"}, inplace=True)
         print("df_shap_forest:\n",df_shap_forest)
 
-    
+    str_rois = ""
+    if classif_from_17_roi : str_rois = "_17rois_only" 
+    if biomarkers_roi : str_rois="_bilateralHippo_and_Amyg_only"
+    str_bin= "_binarized_roi" if binarize else ""
+    str_wh = "_whitened" if whitening else ""
+     
+
     if save_results :
+        if not random_permutation:
+            if not df_results.empty: 
+                df_results.to_pickle(RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+str_wh+'_24juin25_'+str(cv_seed)+'cvseed.pkl')
+                print("df_results saved to : ",RESULTS_DIR+'results_classification'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+str_wh+'_24juin25_'+str(cv_seed)+'cvseed.pkl')
+
+        str_random= "_random_permutations_with_seed_"+str(seed_label_permutations) if random_permutation else ""
         if not df_coeffsL2LR.empty : 
-            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+'_CV_Edouard.pkl')
-        if dict_cv_subjects : 
-            save_pkl(dict_cv_subjects,ROOT+'reports/folds_CV/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV_'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+"_CV_Edouard.pkl")
+            df_coeffsL2LR.to_pickle(RESULTS_DIR+'coefficientsL2LR/L2LR_coefficients'+str_labels+'_'+str(nbfolds)+'fold'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+str_wh+str_random+'_24juin25_'+str(cv_seed)+'cvseed.pkl')
+        # if dict_cv_subjects : 
+        #     save_pkl(dict_cv_subjects,ROOT+'reports/folds_CV/subjects_for_each_fold'+str_labels+'_'+str(nbfolds)+'foldCV'+str_diff+str_WM+str_rois+'_v4labels'+str_bin+str_wh+str_random+"_24juin25.pkl")
     
 
     if compute_and_save_shap and not df_shap_forest.empty : 
         if random_permutation: 
             df_shap_forest.to_pickle(FEAT_IMPTCE_RES_DIR+'forest_shap'+str_labels+"_"+str(nbfolds)+"fold_random_permutations_with_seed_"+\
-                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+"_CV_Edouard.pkl")
+                                  str(seed_label_permutations)+"_of_labels"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+str_wh+"_24juin25.pkl")
         else : 
-            df_shap_forest.to_pickle(FEAT_IMPTCE_RES_DIR+'forest_shap'+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+"_CV_Edouard.pkl")
+            df_shap_forest.to_pickle(FEAT_IMPTCE_RES_DIR+'forest_shap'+str_labels+"_"+str(nbfolds)+"fold"+str_diff+str_WM+str_rois+"_v4labels"+str_bin+str_wh+"_24juin25.pkl")
 
     if verbose :
         print("residualization age+sex+site mean roc auc and std :",round(filtered_results_res_age_sex_site.groupby("classifier")["roc_auc_test"].mean(),4),\
@@ -826,6 +952,7 @@ def pls_regression(nb_components=3, significant_rois=None, \
     classif_from_differencem3m0 (bool) : True if classifying from the difference m3-m0
     classif_from_m3 (bool) : True if classifying from m3 ROI
     """
+
     from sklearn.cross_decomposition import PLSRegression
 
     str_labels="_GRvsPaRNR"
@@ -1254,16 +1381,37 @@ def main():
     
     # classification(save_results=True, seed=13, compute_and_save_shap=False, random_permutation=False, classif_from_17_roi=False, \
     #                print_pvals=True, binarize=False, classif_from_m3=True)
+    # classification(compute_and_save_shap=False, save_results=False, whitening=True, cv_seed=42)
     # quit()
-    
-    
-    classification(compute_and_save_shap=True, random_permutation=False)
+
+    classification(save_results=False, whitening=True, cv_seed=42)
+    quit()
+    classification(save_results=True, whitening=True, cv_seed=42, bootstrapping=True)
+    quit()
+
+    def run_classification(n):
+        classification(compute_and_save_shap=False, save_results=True, whitening=True,  cv_seed=42)
+        classification(compute_and_save_shap=False, save_results=True, random_permutation=True, whitening=False, seed_label_permutations=n, cv_seed=42)
+
+    Parallel(n_jobs=-1)(delayed(run_classification)(n) for n in range(1, 1001))
 
     quit()
+    # for n in range(1,1001):
+    #     classification(compute_and_save_shap=False, save_results=True, random_permutation=True, whitening=False, seed_label_permutations=n)
+    #     classification(compute_and_save_shap=False, save_results=True, random_permutation=True, whitening=True, seed_label_permutations=n)
+    # run_random_permutations_shap()
+
+    """
+    def run_classification(seed):
+        # classification(compute_and_save_shap=False, save_results=True, whitening=True, cv_seed=seed)
+        classification(compute_and_save_shap=False, save_results=True, whitening=False, cv_seed=seed)
+
+    Parallel(n_jobs=-1)(delayed(run_classification)(seed) for seed in range(1, 101))
     
+    """
 
 
-    # df= read_pkl(RESULTS_DIR + "results_classification_GRvsPaRNR_5fold_v4labels_CV_Edouard.pkl")
+    # df= read_pkl(RESULTS_DIR + "results_classification_GRvsPaRNR_5fold_v4labels_24juin25.pkl")
     # print_performance_by_residualization_scheme(df, metric="balanced_accuracy")
         
     # to plot logistic regression weights with 17 rois:
@@ -1287,9 +1435,6 @@ def main():
     df = read_pkl("reports/classification_results/results_classification_seed_1_GRvsPaRNR_5fold_bilateralHippo_and_Amyg_only.pkl")
     print_roc_auc_by_residualization_scheme(df, metric="balanced_accuracy")
     """
-
-    
-    
 
     """
 

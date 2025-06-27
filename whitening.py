@@ -170,24 +170,6 @@ class PartialWhiteningTransformer(BaseEstimator, TransformerMixin):
         return w_orig
 
 def main():
-    np.random.seed(0)
-    n_samples = 1000
-
-    # Latent label (binary classification)
-    y = np.random.randint(0, 2, n_samples)
-
-    # Latent signal embedded in both features with noise
-    epsilon1 = np.random.normal(0, 1, n_samples)
-    epsilon2 = np.random.normal(0, 1, n_samples)
-
-    # Latent variable L influences both features
-    L = 2 * y + epsilon1  # signal stronger for class 1
-
-    # Feature matrix: correlated features sharing L
-    x1 = L + epsilon1
-    x2 = L + epsilon2
-    X = np.vstack([x1, x2]).T
-    print("correlation between x1 and x2: ",np.corrcoef(X.T))
 
     def zca_whiten(X):
         X_mean = X.mean(axis=0)
@@ -196,47 +178,67 @@ def main():
         U, S, _ = np.linalg.svd(cov)
         W = U @ np.diag(1 / np.sqrt(S + 1e-5)) @ U.T
         X_whitened = X_centered @ W.T
-        return X_whitened, W, X_mean
-    
-    X_white, W, X_mean = zca_whiten(X)
-
-    X_reconstructed = X_white @ np.linalg.inv(W.T) + X_mean
-    print("Max reconstruction error:", np.abs(X - X_reconstructed).max())
-    # if the reconstruction error is near zero, there is no information loss
+        return X_whitened, W, X_mean    
 
     # compare classification performance
     from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import accuracy_score, roc_auc_score
     from sklearn.model_selection import train_test_split
 
+    def run_test(X, y, name):
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, stratify=y)
 
-    clf = LogisticRegression()
+        # Whitening
+        X_train_white, W, X_mean = zca_whiten(X_train)
+        X_test_white = (X_test - X_mean) @ W.T
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, stratify=y)
+        X_reconstructed = X_train_white @ np.linalg.inv(W.T) + X_mean
+        print("Max reconstruction error:", np.abs(X_train - X_reconstructed).max())
+        # if the reconstruction error is near zero, there is no information loss
 
-    X_train_white, W, X_mean = zca_whiten(X_train)
-    X_test_white = (X_test - X_mean)   @ W.T
+        clf = LogisticRegression()
 
-    # On original data
-    clf.fit(X_train, y_train)
-    y_pred_proba_orig = clf.predict_proba(X_test)[:, 1]
-    acc_orig = accuracy_score(y_test, clf.predict(X_test))
-    auc_orig = roc_auc_score(y_test, y_pred_proba_orig)
+        # On original data
+        clf.fit(X_train, y_train)
+        y_pred_proba_orig = clf.predict_proba(X_test)[:, 1]
+        acc_orig = accuracy_score(y_test, clf.predict(X_test))
+        auc_orig = roc_auc_score(y_test, y_pred_proba_orig)
 
-    # On whitened data
-    clf.fit(X_train_white, y_train)
-    y_pred_proba_white = clf.predict_proba(X_test_white)[:, 1]
-    acc_white = accuracy_score(y_test, clf.predict(X_test_white))
-    auc_white = roc_auc_score(y_test, y_pred_proba_white)
+        # On whitened data
+        clf.fit(X_train_white, y_train)
+        y_pred_proba_white = clf.predict_proba(X_test_white)[:, 1]
+        acc_white = accuracy_score(y_test, clf.predict(X_test_white))
+        auc_white = roc_auc_score(y_test, y_pred_proba_white)
 
-    # Results
-    print("Original Accuracy:", acc_orig)
-    print("Original ROC AUC:", auc_orig)
-    print("Whitened Accuracy:", acc_white)
-    print("Whitened ROC AUC:", auc_white)
+        print(f"\n== {name} ==")
+        print("Original Accuracy:", acc_orig)
+        print("Original ROC AUC:", auc_orig)
+        print("Whitened Accuracy:", acc_white)
+        print("Whitened ROC AUC:", auc_white)
 
+    # Test 1: y signal + latent L shared variance : the features' information on the label is shared btw them
+    np.random.seed(0)
+    n_samples = 1000
+    y = np.random.randint(0, 2, n_samples)
+    epsilon1 = np.random.normal(0, 1, n_samples)
+    epsilon2 = np.random.normal(0, 1, n_samples)
+    L = 2 * y + epsilon1
 
+    x1 = L + epsilon1
+    x2 = L + epsilon2
+    X = np.vstack([x1, x2]).T
+    run_test(X, y, "Test 1: L = 2y + noise (shared informative signal)")
+
+    # Test 2: L = noise, both features get L + y + noise : the features' information on the label is not shared btw them
+    epsilon1 = np.random.normal(0, 1, n_samples)
+    epsilon2 = np.random.normal(0, 1, n_samples)
+    epsilon3 = np.random.normal(0, 1, n_samples)
+    L = epsilon3  # non-informative shared variance
+
+    x1 = L + y + epsilon1
+    x2 = L + y + epsilon2
+    X2 = np.vstack([x1, x2]).T
+    run_test(X2, y, "Test 2: L = noise only (shared nuisance)")
 
 
 
