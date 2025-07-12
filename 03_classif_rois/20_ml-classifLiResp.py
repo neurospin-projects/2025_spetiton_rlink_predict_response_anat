@@ -736,19 +736,21 @@ np.sum(['Right' in s for s in input_columns]) == 126
 ###################################################################################
 # %% Grouping features by ROIs (models)
 
+# Permutation 0 is without permutations
+def permutation(x, random_state=None):
+    if random_state == 0:
+        return(x)
+    if random_state is not None:
+        np.random.seed(seed=random_state)
+    return np.random.permutation(x)
+
 if 'output_predictions_scores_feature-importance' in config:
 
     permutation_seed =  pd.read_csv(config['input_permutations']).perm.values
     permutation_seed = [0]
 
     # perumtation (permute y) x folds
-    # Permutation 0 is without permutations
-    def permutation(x, random_state=None):
-        if random_state == 0:
-            return(x)
-        if random_state is not None:
-            np.random.seed(seed=random_state)
-        return np.random.permutation(x)
+
 
     # Load the CV test split
     cv_test = PredefinedSplit(json_file=config['input_cv_test'])
@@ -842,7 +844,7 @@ if 'output_predictions_scores_feature-importance' in config:
 
     models_cv = dict_cartesian_product(models, cv_test_dict_Xy)
 
-    # %% Fit models
+    # Fit models
 
     res_cv = run_parallel(fit_predict, models_cv, verbose=50)
     #res_cv = run_sequential(fit_predict, models_cv, verbose=50)
@@ -951,10 +953,6 @@ if 'output_predictions_scores_feature-importance' in config:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
 
-
-
-
-
 ################################################################################
 # %% Interpretability: Group ROIs and linear models
 # =================================================
@@ -1024,7 +1022,6 @@ transformers_coefs_stat = transformers_coefs.groupby(['model', 'roi', 'feature']
 
 summary_stat = pd.merge(transformers_coefs_stat, forward_corr_stat)
 summary_stat = summary_stat.loc[summary_stat[('roi', '')].isin(rois_selected),]
-summary_stat.index
 
 with pd.ExcelWriter(config['output_RoiGrdLda_coefs']) as writer:#, mode="a", if_sheet_exists="replace") as writer:
     summary_stat.to_excel(writer, sheet_name='SUMMARY_stat')#, index=False)
