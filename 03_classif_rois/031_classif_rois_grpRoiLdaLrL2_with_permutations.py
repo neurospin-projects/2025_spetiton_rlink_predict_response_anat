@@ -1,83 +1,29 @@
 '''
-Supervised Classification
-=========================
-
-rsync -azvu --exclude study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4_task-predLiResp/20_ml-classifLiResp.cachedir study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4_task-predLiResp triscotte.intra.cea.fr:/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/edouard/
+Supervised Classification: Group ROIs with LDA followed L2LR including permutations
+===================================================================================
 
 '''
 
 # %% 1. Initialization 
 # ====================
 
-# # %% Imports
-# # ----------
-
-# # System
-# import sys
-# import os
-# import os.path
-# import time
-# import json
-# from datetime import datetime
-
-
-# # Scientific python
-# import numpy as np
-# import pandas as pd
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# import scipy.stats
-# from statsmodels.stats.multitest import multipletests
-
-# # Univariate statistics
-# # import statsmodels.api as sm
-# # import statsmodels.formula.api as smf
-# # import statsmodels.stats.api as sms
-
-# # from itertools import product
-
-# # Models
-# from sklearn.base import clone
-# # from sklearn.decomposition import PCA
-# # import sklearn.linear_model as lm
-# # import sklearn.svm as svm
-# # from sklearn.neural_network import MLPClassifier
-# # from sklearn.ensemble import RandomForestClassifier
-# # from sklearn.ensemble import GradientBoostingClassifier
-# # from sklearn.ensemble import BaggingClassifier
-# # from sklearn.ensemble import StackingClassifier
-
-# # Metrics
-# import sklearn.metrics as metrics
-
-# # Resampling
-# # from sklearn.model_selection import cross_val_score
-# from sklearn.model_selection import cross_validate
-# # from sklearn.model_selection import cross_val_predict
-# # from sklearn.model_selection import train_test_split
-# # from sklearn.model_selection import KFold
-# from sklearn.model_selection import GridSearchCV
-# from sklearn.model_selection import StratifiedKFold, LeaveOneOut
-# #from sklearn import preprocessing
-
-# from sklearn.pipeline import Pipeline
-# from sklearn.pipeline import make_pipeline
-# from sklearn import preprocessing
-# import sklearn.linear_model as lm
-# from sklearn.compose import ColumnTransformer
-
-# # Set pandas display options
-# pd.set_option('display.max_colwidth', None)  # No maximum width for columns
-# pd.set_option('display.width', 1000)  # Set the total width to a large number
-
 from init import *
 
 # Default output prefix
-config['prefix'] = "rlink_classiLiResp_anatROI"
-
+config['prefix'] = "031_classif_rois_grpRoiLdaLrL2_with_permutations"
+#config['output_repeatedcv'] = os.path.join(config['output_models'], config['prefix'] + "_repeatedcv.xlsx")
+config['input_cv_test'] =  "stratified-5cv.json"
+config['input_permutations'] = config['prefix'] + "_permutations_seeds.csv"
+ 
 # Set output paths
 config['log_filename'] = config['prefix'] + ".log"
 config['cachedir'] = config['prefix'] + ".cachedir"
+
+
+config['output_predictions_scores_feature-importance'] = \
+    os.path.join(config['output_models'], config['prefix'] + "_predictions_scores_feature-importance.xlsx")
+
+
 
 # Print log function
 print_log = create_print_log(config['log_filename'])
@@ -85,71 +31,11 @@ print_log('###################################################################')
 print_log('## %s' % datetime.now().strftime("%Y-%m-%d %H:%M"))
 print_log(config)
 
-################################################################################
-# %% Read config file 
-# --------------------
 
-# #config_file = '/home/ed203246/git/nitk/scripts/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4_task-predLiResp/20_ml-classifLiResp_config.json'
-# config_file = '/home/ed203246/git/2025_spetiton_rlink_predict_response_anat/03_classif_rois/20_ml-classifLiResp_config.json'
-# with open(config_file) as json_file:
-#      config = json.load(json_file)
-
-# # LD_LIBRARY_PATH
-# if "LD_LIBRARY_PATH" in config:
-#     for path in config["LD_LIBRARY_PATH"]:
-#         sys.path.append(path) # Add to system path
-
-#from nitk.ml_utils.config import initialize_config
-# config = initialize_config(config_file, config=config)
 
 from joblib import Memory
 memory = Memory(config['cachedir'], verbose=0)
 
-################################################################################
-# %% Set Output files
-# -------------------
-
-# Comment  the next line to avoid overwriting existing files
-# config['output_repeatedcv'] = os.path.join(config['output_models'], config['prefix'] + "_repeatedcv.xlsx")
-# config['output_stratification'] = os.path.join(config['output_models'], config['prefix'] + "_stratification-sse.csv")
-# config['output_cv_test'] = config['prefix'] + "_cv-5cv.json"
-config['input_cv_test'] = config['prefix'] + "_cv-5cv.json"
-config['input_permutations'] = config['prefix'] + "_permutations.csv"
-
-# config['output_predictions_scores_feature-importance'] = \
-#     os.path.join(config['output_models'], config['prefix'] + "_predictions_scores_feature-importance.xlsx")
-
-config['output_RoiGrdLda_coefs']= \
-    os.path.join(config['output_models'], config['prefix'] + "_RoiGrdLda_coefs.xlsx")
-
-config['output_feature_correlation_matrix']= \
-    os.path.join(config['output_reports'], config['prefix'] + "_features_corr_matrix")
-    
-# n_splits_val = 5
-# cv_val = StratifiedKFold(n_splits=n_splits_val, shuffle=True, random_state=42)
-
-# ################################################################################
-# # %% Additional imports (utils)
-# # -----------------------------
-
-# import nitk
-# from nitk.sys_utils import import_module_from_path, create_print_log
-# # from nitk.pandas_utils.dataframe_utils import expand_key_value_column
-# # #from nitk.pandas_utils.dataframe_utils import describe_categorical
-# # from nitk.ml_utils.dataloader_table import get_y, get_X
-# # from nitk.ml_utils.residualization import get_residualizer
-# # from nitk.jobs_utils import run_sequential, run_parallel
-# # from nitk.ml_utils.cross_validation import PredefinedSplit
-# # from nitk.python_utils import dict_cartesian_product
-# # from nitk.ml_utils.sklearn_utils import pipeline_behead, pipeline_split, get_linear_coefficients
-# # from nitk.ml_utils.custom_models import GroupFeatureTransformer
-
-# # from nitk.ml_utils.iterstrat.ml_stratifiers import MultilabelStratifiedKFold
-
-
-# # Import models
-# classification_models = import_module_from_path(config["models_path"])
-# print_log = create_print_log(config)
 
 print_log('###################################################################')
 print_log('## %s' % datetime.now().strftime("%Y-%m-%d %H:%M"))
@@ -157,7 +43,7 @@ print_log(config)
 
 
 ################################################################################
-# %% Read Data
+# %% 2. Read Data
 # ------------
 
 data = pd.read_csv(config['input_data'])
@@ -198,224 +84,6 @@ assert np.all(X == residualizer_estimator.pack(Z, X_))
 
 
 ################################################################################
-# %% 2. CV Stratification scheme
-# ==============================
-#
-# make_splits() function 
-# Find a 5CV split stratified for target and site
-# Sample distribution (proportions for each response and site) in the original data
-# Fold distribution (proportions for each response and site) in the original data
-# Compute distribution error (Fold - sample)
-# Sum arross folds the squared error (SSE) to evaluate the quality of the stratification
-
-def cv_stratification_metric(df, factors, cv):
-    """Metrics (SSE) that evaluate the quality kfolds stratification for many
-    factors. Sum across fold SSE (true proportions (from df[factors], 
-    fold proportions (from df[test_idx, factors])
-
-    Parameters
-    ----------
-    df : _type_
-        _description_
-    factors : _type_
-        _description_
-    cv : _type_
-        _description_
-    """
-    def make_cartesian_series_from_factors(df, factors, value=0):
-        levels = [df[f].unique() for f in factors]
-        index = pd.MultiIndex.from_product(levels, names=factors)
-        return pd.Series(value, index=index)
-
-    def proportions_byfactors(df, factors):
-        counts = df.groupby(factors).size()
-        prop = counts / counts.sum()
-        return prop
-    
-    empty = make_cartesian_series_from_factors(df, factors, value=0)
-    size_exp = np.prod([len(df[f].unique()) for f in factors])
-    assert empty.shape[0] == size_exp
-
-    # Target proportion
-    prop_tot = (proportions_byfactors(df=df, factors=factors) + empty).fillna(0)
-
-    count_tot = (df.groupby(factors).size() + empty).fillna(0)
-    weights = count_tot / (count_tot ** 2).sum()
-    assert np.allclose((count_tot * weights).sum(), 1)
-
-    # Compute the sum of squared error (SSE) for each fold
-    # SSE = sum((fold_proportions - total_proportions) * weights)
-    sse, sse_weighted = 0, 0
-    for train_index, test_index in cv.split(X, y):
-        prop_fold = proportions_byfactors(df=df.iloc[test_index], factors=factors)
-        sse += np.sum(((prop_fold - prop_tot)) ** 2)
-        sse_weighted += np.sum(((prop_fold - prop_tot) * weights) ** 2)
-        
-    return sse, sse_weighted
-
-
-def make_splits(X, y, groups_df, factors, n_splits=5):
-    """Make splits for repeated CV. Measure the quality of the CV stratification
-    using the sum of squared error (SSE) for each fold. 
-    
-    """
-    n_splits_test = 5
-    cv_test = StratifiedKFold(n_splits=n_splits_test,
-                            shuffle=True, random_state=42)
-
-
-    # github https://github.com/trent-b/iterative-stratification
-    # paper https://link.springer.com/chapter/10.1007/978-3-642-23808-6_10
-
-    all_idx = np.arange(len(groups_df))
-    cv_id = PredefinedSplit([[all_idx, all_idx] for i in range(5)])
-    sse_, sse_weighted_ = cv_stratification_metric(groups_df, factors=factors, cv=cv_id)
-    assert sse_ == sse_weighted_ == 0
-
-    sse, sse_weighted = [], []
-    rcvs = dict()
-    for seed in range(100):
-        #seed = 4
-        mskf = MultilabelStratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        splits_index_mskf = [(train_index, test_index) for train_index, test_index in
-                            mskf.split(X, groups_df[factors])]
-        mskf = PredefinedSplit(splits_index_mskf)
-        rcvs["mskf5cv-%i" % seed] = mskf
-        sse_, sse_weighted_ = cv_stratification_metric(groups_df, factors=factors, cv=mskf)
-        sse.append(["mskf5cv", seed, sse_, sse_weighted_])
-
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        #splits_index_skf = [test_index for train_index, test_index in skf.split(X, y)]
-        rcvs["skf5cv-%i" % seed] = skf
-        sse_, sse_weighted_ = cv_stratification_metric(groups_df, factors=factors, cv=skf)
-        sse.append(["skf5cv", seed, sse_, sse_weighted_])
-
-        skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=seed)
-        #splits_index_skf = [test_index for train_index, test_index in skf.split(X, y)]
-        rcvs["skf10cv-%i" % seed] = skf
-        sse_, sse_weighted_ = cv_stratification_metric(groups_df, factors=factors, cv=skf)
-        sse.append(["skf10cv", seed, sse_, sse_weighted_])
-
-
-    rcvs['loo-all'] = LeaveOneOut()
-
-    # Save stratification SSE
-    sse = pd.DataFrame(sse, columns=['method', 'seed', 'sse', 'sse_weighted'])
-    sse.sort_values(by='sse', inplace=True)
-
-    return rcvs, sse
-
-
-################################################################################
-# %% Repeated CV using cross_validate
-# ===================================
-# 
-# - Requires a make_splits() function
-# - Use `cross_validate <https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.cross_validate.html#>`_`
-# Choose `scoring functions <https://scikit-learn.org/stable/modules/model_evaluation.html#string-name-scorers>`_ 
-
-groups_df = pd.DataFrame(dict(y=y, site=data['site']))
-factors = ['y', 'site']
-    
-if "output_repeatedcv" in config:
-    
-    # 1. Repeated CV
-
-    rcvs, sse = make_splits(X, y, groups_df, factors, n_splits=5)
-
-    if 'output_cv_stratification' in config:
-        sse.to_csv(config['output_stratification'], index=False)
-
-
-    # 2.  Models (Do not parallelize grid search)
-    models = classification_models.make_models(n_jobs_grid_search=1, cv_val=cv_val,
-                        residualization_formula=residualization_formula,
-                        residualizer_estimator=residualizer_estimator)
-
-    print("Models (N=%i)" % len(models), models.keys())
-    metrics_names = ['test_%s' % m for m in config["metrics"]] + ['train_%s' % m for m in config["metrics"]]
-
-
-    # 3. Pack all models x repeated CV into a single dictionary
-    models_rcvs = dict_cartesian_product(models, rcvs)
-    print(len(models_rcvs))
-
-
-    # Define a wrapper for cross_validate to use with run_parallel
-    # This wrapper will cache the results to avoid recomputing them
-    @memory.cache
-    def cross_validate_wrapper(estimator, cv_test, **kwargs):
-        return cross_validate(estimator, X, y, cv=cv_test,
-                                scoring=config["metrics"],
-                                return_train_score=True)
-    
-    # 4. Parallel execution with cache
-    res = run_parallel(cross_validate_wrapper, models_rcvs, verbose=100, n_jobs=4)
-
-    # 5. Gather results
-    res = pd.DataFrame([list(k) + [score[m].mean() for m in metrics_names]
-                        for k, score in res.items()],
-                    columns=["model", "rep"] + metrics_names)
-
-    res = res.sort_values('test_roc_auc', ascending=False)
-        
-    # Add stratification SSE to results
-    sse = pd.read_csv(config['output_stratification'])
-    sse['rep'] = sse['method'].str.cat(sse['seed'].astype(str), sep='-')
-    sse = sse[['rep', 'sse', 'sse_weighted']]
-    res = pd.merge(res, sse, how="left", on='rep')
-    #res.to_csv(config['output_repeatedcv'], index=False)
-
-    # Compute mean by model and rep
-    byrep = res.groupby('rep').mean(numeric_only=True).sort_values('test_roc_auc', ascending=False)
-    print(byrep.head(20))
-
-    bymod = res.groupby('model').mean(numeric_only=True).sort_values('test_roc_auc', ascending=False)
-    print(bymod.head(20))
-
-    # Save results to Excel
-    with pd.ExcelWriter(config["output_repeatedcv"]) as writer:
-        res.to_excel(writer, sheet_name="All", index=False)
-        bymod.to_excel(writer, sheet_name="by_model (repeated CV)")
-        byrep.to_excel(writer, sheet_name="by_repetition")
-    
-
-################################################################################
-# %% Choose a a correctly stratified 5CV split based on min SSE and save it
-# ========================================================================
-
-if 'output_cv_test' in config:
-    # Chose a 5CV split based on min SSE
-   
-
-    # StratifiedKFold with random_state=4 has the better sse in the ten first resample
-    # Save it
-    mskf = MultilabelStratifiedKFold(n_splits=5, shuffle=True, random_state=55)
-    cv_test = PredefinedSplit([(train, test) for train, test in mskf.split(X, groups_df[factors])])
-    #cv_test = StratifiedKFold(n_splits=n_splits_test, shuffle=True, random_state=4)
-    cv_test.to_json(config['output_cv_test'])
-    
-    cv_stratification_metric(groups_df, factors=factors, cv=cv_test)
-
-    #groups_df['site'] = ['site-%02i' % int(s.split("_")[1]) for s in groups_df['site']]
-
-    ct = pd.crosstab(groups_df['y'], groups_df['site'])
-    ct["sum"] = ct.sum(axis=1)
-    sum_row = pd.DataFrame([ct.sum(axis=0)], columns=ct.columns)
-    ct = pd.concat([ct, sum_row], ignore_index=True)    
-    ct.insert(0, 'fold', 'all')
-    
-    for fold, (train, test) in enumerate(cv_test.split(X, y)):
-        ct_fold = pd.crosstab(groups_df.loc[test, 'y'], groups_df.loc[test, 'site'])
-        ct_fold["sum"] = ct_fold.sum(axis=1)
-        sum_row = pd.DataFrame([ct_fold.sum(axis=0)], columns=ct_fold.columns)
-        ct_fold = pd.concat([ct_fold, sum_row], ignore_index=True) 
-        ct_fold.insert(0, 'fold', fold)
-        ct = pd.concat([ct, ct_fold], axis=0)
-    
-    print(ct)
-
-################################################################################
 # Interpretability: use linear models and group features
 # ======================================================
 # 
@@ -436,7 +104,7 @@ def single_feature_classif(X_train, X_test, y_train, y_test):
 # Mapper: Fit and predict function used in parallel execution
 # -----------------------------------------------------------
 
-#@memory.cache
+@memory.cache
 def fit_predict(estimator, X, y, train_idx, test_idx, **kwargs):
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
@@ -748,7 +416,7 @@ np.sum(['CSF' in s for s in feature_columns]) == 135
 np.sum(['Left' in s for s in feature_columns]) == 126
 np.sum(['Right' in s for s in feature_columns]) == 126
 
-# %% 
+
 # Permutation 0 is without permutations
 def permutation(x, random_state=None):
     if random_state == 0:
@@ -762,7 +430,7 @@ def permutation(x, random_state=None):
 if 'output_predictions_scores_feature-importance' in config:
 
     permutation_seed =  pd.read_csv(config['input_permutations']).perm.values
-    permutation_seed = [0]
+    #permutation_seed = [0]
     nperms = len(permutation_seed) - 1
     # df = pd.read_excel("/home/ed203246/git/2025_spetiton_rlink_predict_response_anat/03_classif_rois/models/20_ml-classifLiResp_predictions_scores_feature-importance_v-20250708.xlsx", sheet_name='predictions')
     # perms = pd.DataFrame(dict(perm=[int(perm.split('-')[1]) for perm in df.perm.unique()]))
@@ -828,29 +496,29 @@ if 'output_predictions_scores_feature-importance' in config:
                 preprocessing.StandardScaler(),
                 GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
                             {'C': 10. ** np.arange(-3, 1)},
-                            cv=cv_val, n_jobs=5, scoring='balanced_accuracy')),
-        'model-grpRoiLdaClust2+lrl2_resid-age+sex+site':
-        make_pipeline(residualizer_estimator, #preprocessing.StandardScaler(),
-                GroupFeatureTransformer(roi_groups,  "lda"),
-                FeatureAgglomeration(n_clusters=2),
-                preprocessing.StandardScaler(),
-                GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
-                            {'C': 10. ** np.arange(-3, 1)},
-                            cv=cv_val, n_jobs=5)),
-        'model-grpRoiLdaClust3+lrl2_resid-age+sex+site':
-        make_pipeline(residualizer_estimator, #preprocessing.StandardScaler(),
-                GroupFeatureTransformer(roi_groups,  "lda"),
-                FeatureAgglomeration(n_clusters=3),
-                preprocessing.StandardScaler(),
-                GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
-                            {'C': 10. ** np.arange(-3, 1)},
-                            cv=cv_val, n_jobs=5)),
-        'model-mlp_resid-age+sex+site':
-        make_pipeline(residualizer_estimator, 
-                preprocessing.MinMaxScaler(),
-                GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
-                            param_grid=mlp_param_grid,
-                            cv=cv_val, n_jobs=5))
+                            cv=cv_val, n_jobs=5, scoring='balanced_accuracy'))
+        # 'model-grpRoiLdaClust2+lrl2_resid-age+sex+site':
+        # make_pipeline(residualizer_estimator, #preprocessing.StandardScaler(),
+        #         GroupFeatureTransformer(roi_groups,  "lda"),
+        #         FeatureAgglomeration(n_clusters=2),
+        #         preprocessing.StandardScaler(),
+        #         GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
+        #                     {'C': 10. ** np.arange(-3, 1)},
+        #                     cv=cv_val, n_jobs=5)),
+        # 'model-grpRoiLdaClust3+lrl2_resid-age+sex+site':
+        # make_pipeline(residualizer_estimator, #preprocessing.StandardScaler(),
+        #         GroupFeatureTransformer(roi_groups,  "lda"),
+        #         FeatureAgglomeration(n_clusters=3),
+        #         preprocessing.StandardScaler(),
+        #         GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
+        #                     {'C': 10. ** np.arange(-3, 1)},
+        #                     cv=cv_val, n_jobs=5)),
+        # 'model-mlp_resid-age+sex+site':
+        # make_pipeline(residualizer_estimator, 
+        #         preprocessing.MinMaxScaler(),
+        #         GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
+        #                     param_grid=mlp_param_grid,
+        #                     cv=cv_val, n_jobs=5))
         }
 
     features_names = {
@@ -874,6 +542,14 @@ if 'output_predictions_scores_feature-importance' in config:
     predictions_df = reducer.predictions_dict_toframe(res_cv)
     predictions_metrics_df = reducer.prediction_metrics(predictions_df)
     print(predictions_metrics_df)
+    """
+                                            model      perm  balanced_accuracy   roc_auc
+    0        model-grpRoiLda+lrl2_resid-age+sex+site  perm-000           0.703175  0.690185
+    1  model-grpRoiLdaClust2+lrl2_resid-age+sex+site  perm-000           0.659087  0.691481
+    2  model-grpRoiLdaClust3+lrl2_resid-age+sex+site  perm-000           0.659087  0.693968
+    3                  model-lrl2_resid-age+sex+site  perm-000           0.691230  0.683968
+    4                   model-mlp_resid-age+sex+site  perm-000           0.502778  0.515635
+    """
 
     predictions_metrics_pvalues_df = reducer.prediction_metrics_pvalues(predictions_metrics_df)
     print(predictions_metrics_pvalues_df)
