@@ -103,9 +103,7 @@ class PairwiseWhiteningTransformer(BaseEstimator, TransformerMixin):
             w_orig[[i, j]] = np.linalg.inv(W.T) @ w_g
 
         return w_orig
-        
-        # W_inv = np.linalg.inv(self.whitening_matrix_)
-        # return W_inv.T @ coeffs
+    
 
 class PartialWhiteningTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, groups, lambda_reg=0.1, method='full', whiten=True):
@@ -226,8 +224,8 @@ def main():
 
     x1 = L + epsilon1
     x2 = L + epsilon2
-    X = np.vstack([x1, x2]).T
-    run_test(X, y, "Test 1: L = 2y + noise (shared informative signal)")
+    X_test1 = np.vstack([x1, x2]).T
+    run_test(X_test1, y, "Test 1: L = 2y + noise (shared informative signal)")
 
     # Test 2: L = noise, both features get L + y + noise : the features' information on the label is not shared btw them
     epsilon1 = np.random.normal(0, 1, n_samples)
@@ -237,8 +235,70 @@ def main():
 
     x1 = L + y + epsilon1
     x2 = L + y + epsilon2
-    X2 = np.vstack([x1, x2]).T
-    run_test(X2, y, "Test 2: L = noise only (shared nuisance)")
+    X_test2 = np.vstack([x1, x2]).T
+    run_test(X_test2, y, "Test 2: L = noise only (shared nuisance)")
+
+    def run_test_weights_interpretation(X, y, label):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.model_selection import train_test_split
+
+        print(f"\n{label}")
+
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, random_state=42)
+
+        # Whitening
+        X_train_white, W, X_mean = zca_whiten(X_train)
+        X_test_white = X_test @ W
+
+        # Classifier
+        clf = LogisticRegression()
+        
+        # Fit on whitened data
+        clf.fit(X_train_white, y_train)
+        w_white = clf.coef_[0]
+
+        # Project back to original ROI space
+        w_unwhitened = np.linalg.inv(W.T) @ w_white
+
+        print("Classifier weights (whitened space):", np.round(w_white, 3))
+        print("Classifier weights (original ROI space):", np.round(w_unwhitened, 3))
+
+        # Now compare to directly fitting in original space
+        clf_orig = LogisticRegression()
+        clf_orig.fit(X_train, y_train)
+        w_direct = clf_orig.coef_[0]
+        print("Classifier weights (fit directly on original data):", np.round(w_direct, 3))
+
+    # Test 3: L = noise, x1 = L + 1.0*y + noise, x2 = L + 0.3*y + noise
+
+    # when correlated roi that both have label information (for example, left/right hippocampus), we expect
+    # that without whitening, the weights of the linear regression for each region
+    # will be accounted for just once (more or less, depending on how correlated they are)
+    # , and distributed between the two regions.
+    # with withening, we expect these weights to be higher for each roi, 
+    # as they wouldn't be distributed between the two regions, but considered separately.
+
+    epsilon1 = np.random.normal(0, 1, n_samples)
+    epsilon2 = np.random.normal(0, 1, n_samples)
+    epsilon3 = np.random.normal(0, 1, n_samples)
+    L = epsilon3  # shared nuisance
+
+    # asymmetric contributions
+    beta1, beta2 =  0.3, 1.0
+    x1 = L + beta1 * y + epsilon1
+    x2 = L + beta2 * y + epsilon2
+    X_test3_asym = np.vstack([x1, x2]).T
+    run_test_weights_interpretation(X_test3_asym, y, "Test 3: L = noise + asymmetric y contributions, where the x1 weight is "+str(beta1)+""
+    " and the x2 weight is "+str(beta2))
+
+    # symmetric contributions
+    x1 = L + y + epsilon1
+    x2 = L + y + epsilon2
+    X_test3_sym = np.vstack([x1, x2]).T
+    run_test_weights_interpretation(X_test3_sym, y, "Test 3: L = noise + symmetric y contributions "
+    "(weights should be around 1 for both x1 and x2)")
+
 
 
 
@@ -246,4 +306,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
