@@ -1,0 +1,317 @@
+################################################################################
+# %% Imports
+# ----------
+
+# System
+import sys
+import os
+import os.path
+import time
+import json
+from datetime import datetime
+
+
+# Scientific python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import scipy.stats
+from statsmodels.stats.multitest import multipletests
+
+# Univariate statistics
+# import statsmodels.api as sm
+# import statsmodels.formula.api as smf
+# import statsmodels.stats.api as sms
+
+# from itertools import product
+
+# Models
+from sklearn.base import clone
+# from sklearn.decomposition import PCA
+# import sklearn.linear_model as lm
+# import sklearn.svm as svm
+# from sklearn.neural_network import MLPClassifier
+# from sklearn.ensemble import RandomForestClassifier
+# from sklearn.ensemble import GradientBoostingClassifier
+# from sklearn.ensemble import BaggingClassifier
+# from sklearn.ensemble import StackingClassifier
+
+# Metrics
+import sklearn.metrics as metrics
+
+# Resampling
+# from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_validate
+# from sklearn.model_selection import cross_val_predict
+# from sklearn.model_selection import train_test_split
+# from sklearn.model_selection import KFold
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import StratifiedKFold, LeaveOneOut
+#from sklearn import preprocessing
+
+from sklearn.pipeline import Pipeline
+from sklearn.pipeline import make_pipeline
+from sklearn import preprocessing
+import sklearn.linear_model as lm
+from sklearn.compose import ColumnTransformer
+
+# Set pandas display options
+pd.set_option('display.max_colwidth', None)  # No maximum width for columns
+pd.set_option('display.width', 1000)  # Set the total width to a large number
+
+################################################################################
+# %% Config dictionary
+# --------------------
+
+config = {
+    # Working directory
+    "WD": "/home/ed203246/git/2025_spetiton_rlink_predict_response_anat/03_classif_rois/",
+    # Input data
+    "input_data" : "./data/processed/roi-cat12vbm/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4.csv",
+    # Paths
+    "LD_LIBRARY_PATH": ["/home/ed203246/git/nitk"],
+    #"models_path": "./classification_models.py"
+    # Output directories
+    'output_models': "./models",
+    'output_reports': "./reports",
+    # Variables
+    "target": "y",
+    "target_remap": {"NR":0, "PaR":0, "GR":1},
+    "residualization": ["age", "sex", "site"],
+    "drop": ["participant_id"],
+    "metrics": ["accuracy", "balanced_accuracy", "roc_auc"],
+}
+
+# Initialize WD
+os.chdir(config["WD"])
+
+    
+# LD_LIBRARY_PATH
+if "LD_LIBRARY_PATH" in config:
+    for path in config["LD_LIBRARY_PATH"]:
+        sys.path.append(path) # Add to system path
+
+
+################################################################################
+# %% Additional imports (from nitk)
+# ---------------------------------
+
+import nitk
+from nitk.sys_utils import import_module_from_path, create_print_log
+from nitk.pandas_utils.dataframe_utils import expand_key_value_column
+#from nitk.pandas_utils.dataframe_utils import describe_categorical
+from nitk.ml_utils.dataloader_table import get_y, get_X
+from nitk.ml_utils.residualization import get_residualizer
+from nitk.jobs_utils import run_sequential, run_parallel
+from nitk.ml_utils.cross_validation import PredefinedSplit
+from nitk.python_utils import dict_cartesian_product
+from nitk.ml_utils.sklearn_utils import pipeline_behead, pipeline_split, get_linear_coefficients
+from nitk.ml_utils.custom_models import GroupFeatureTransformer
+from nitk.pandas_utils.dataframe_utils import describe_categorical
+from nitk.sys_utils import create_print_log
+
+from nitk.ml_utils.iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+
+n_splits_val = 5
+cv_val = StratifiedKFold(n_splits=n_splits_val, shuffle=True, random_state=42)
+
+
+###################################################################################
+# %% Classification models
+# ------------------------
+
+import numpy as np
+
+# Models
+from sklearn.base import clone
+from sklearn.decomposition import PCA
+import sklearn.linear_model as lm
+import sklearn.svm as svm
+from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import BaggingClassifier
+from sklearn.ensemble import StackingClassifier
+
+from sklearn.pipeline import make_pipeline
+
+
+from sklearn.model_selection import GridSearchCV
+# from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
+from sklearn import preprocessing
+from sklearn.pipeline import make_pipeline
+
+def make_models(n_jobs_grid_search, cv_val,
+                residualization_formula=None,
+                residualizer_estimator=None):
+    """_summary_
+
+    Parameters
+    ----------
+    n_jobs_grid_search : int
+        Nb jobs for grd search
+    residualization_formula : str, optional
+        if string is provided use residualization, and labels model with this
+        string, by default None
+    residualizer_estimator :  ResidualizerEstimator()
+        The residualizer
+
+    Returns
+    -------
+    dict
+        Dictionary of models
+    """
+    
+    # Param grd for MLP
+    mlp_param_grid = {"hidden_layer_sizes":
+                      [(100, ), (50, ), (25, ), (10, ), (5, ),         # 1 hidden layer
+                       (100, 50, ), (50, 25, ), (25, 10,
+                                                 # 2 hidden layers
+                                                 ), (10, 5, ),
+                          # 3 hidden layers
+                       (100, 50, 25, ), (50, 25, 10, ), (25, 10, 5, )],
+                      "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]}
+
+
+    # Models models_backbones to be completed with residualizer, 
+    models_backbones = {
+        'model-lrl2cv':[
+            preprocessing.StandardScaler(),
+            # preprocessing.MinMaxScaler(),
+            GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
+                         {'C': 10. ** np.arange(-3, 1)},
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+
+        'model-lrenetcv':[
+            preprocessing.StandardScaler(),
+            # preprocessing.MinMaxScaler(),
+            GridSearchCV(estimator=lm.SGDClassifier(loss='log_loss',
+                                                    penalty='elasticnet',
+                                                    fit_intercept=False, class_weight='balanced'),
+                         param_grid={'alpha': 10. ** np.arange(-1, 3),
+                                     'l1_ratio': [.1, .5, .9]},
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+
+        'model-svmrbfcv':[
+            # preprocessing.StandardScaler(),
+            preprocessing.MinMaxScaler(),
+            GridSearchCV(svm.SVC(class_weight='balanced'),
+                         # {'kernel': ['poly', 'rbf'], 'C': 10. ** np.arange(-3, 3)},
+                         {'kernel': ['rbf'], 'C': 10. ** np.arange(-1, 2)},
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+
+        'model-forestcv':[
+            # preprocessing.StandardScaler(),
+            preprocessing.MinMaxScaler(),
+            GridSearchCV(RandomForestClassifier(random_state=1, class_weight='balanced'),
+                         {"n_estimators": [10, 100]},
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+
+        'model-gbcv':[
+            preprocessing.MinMaxScaler(),
+            GridSearchCV(estimator=GradientBoostingClassifier(random_state=1),
+                         param_grid={"n_estimators": [10, 100]},
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+
+    #     'mlp_cv':[
+    #         # preprocessing.StandardScaler(),
+    #         preprocessing.MinMaxScaler(),
+    #         GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
+    #                      param_grid=mlp_param_grid,
+    #                      cv=cv_val, n_jobs=n_jobs_grid_search)]
+    }
+
+    if residualization_formula:
+        models = {model_name_prefix + "_resid-%s" % residualization_formula:\
+            make_pipeline(* [residualizer_estimator] + model_steps)
+                        for model_name_prefix, model_steps
+                        in models_backbones.items()}
+
+    else:
+        models = {model_name_prefix:\
+            make_pipeline(*model_steps)
+                    for model_name_prefix, model_steps
+                    in models_backbones.items()}
+
+    return models
+
+
+
+################################################################################
+# %% Utils functions
+# ------------------
+
+def get_y(data, target_column, remap_dict=None, print_log=print):
+    """_summary_
+
+    Parameters
+    ----------
+    data : _type_
+        _description_
+    target_column : _type_
+        _description_
+    remap_dict: dict
+        remap target, defualts None
+    print_log : _type_, optional
+        _description_, by default print
+
+    Returns
+    -------
+    _type_
+        _description_
+
+    Yields
+    ------
+    _type_
+        _description_
+    """
+    print_log('\n# y (target)\n"%s", counts:' % target_column)
+    print_log(describe_categorical(data[target_column]))
+
+    if remap_dict:
+        y = data[target_column].map(remap_dict)
+        print_log('After remapping, counts:')
+        print_log(describe_categorical(y))
+    else:
+        y = data[target_column]
+    return y
+
+
+def get_X(data, input_columns, print_log=print):
+    """Get input Data. Perform dummy codings for categorical variables
+
+    Parameters
+    ----------
+    data : DataFrame
+        Input dataFrame
+    input_columns : list
+        input columns
+    print_log: callable function, default print
+
+    Returns
+    -------
+        pd.DataFrame: input Data
+    """
+    X = data[input_columns]
+    ncol = X.shape[1]
+
+    print_log('\n# X (Input data)')
+    print_log(X.describe(include='all').T)
+
+    categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    if categorical_cols:
+        print_log("\nCategorical columns:", categorical_cols)
+        for v in categorical_cols:
+            print_log(v, describe_categorical(data[v]))
+        X = pd.get_dummies(X, dtype=int)
+        print_log('\nAfter coding')
+        print_log(X.describe(include='all').T)
+        print_log('%i dummies variable created' %  (X.shape[1] - ncol))
+
+    return X
+
+
+def toto():
+    print("toto")
