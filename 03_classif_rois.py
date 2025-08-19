@@ -314,7 +314,7 @@ def classification_one_fold(fold_idx, X_arr,y_arr,train_index,test_index,df_ROI_
                     joblib.delayed(explainer)(x) for x in tqdm(X_test_classif)
                 )
                 shap_values = np.array([exp.values for exp in shap_values])
-                shap_svm[fold_idx][residual_key]=shap_values
+                # shap_svm[fold_idx][residual_key]=shap_values
 
             if classif_key=="forestcv" and compute_and_save_shap: # compute shap
                 grid_search = pipeline.named_steps['gridsearchcv']
@@ -584,6 +584,20 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
     str_WM = "_WM_Vol" if classif_from_WM_ROI else ""
 
     df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv")
+
+    # df_mrs = pd.read_csv("mrs_all_participants_data.csv")
+    # df_mrs = df_mrs.drop(columns=[col for col in df_mrs.columns if "%SD" in col])
+    # df_mrs = df_mrs[df_mrs["session"]=="M00"]
+    # df_mrs.columns = df_mrs.columns.str.strip() # removes whitespace from column names
+    # df_mrs = df_mrs.dropna(axis=1) # drop columns with only NaNs
+    # exclude_cols = ['Row', 'Col', 'y','session',"age","sex","site"]  
+    # cols_to_analyze = [s for s in list(df_mrs.columns) if not s.endswith("/Cr+PCr") and s not in exclude_cols]
+    # df_mrs=df_mrs[cols_to_analyze]
+    # print(df_mrs[cols_to_analyze])
+    # print(df_ROI_age_sex_site)
+    # df_ROI_age_sex_site=pd.merge(df_ROI_age_sex_site,df_mrs, on="participant_id",how="inner")
+    # df_ROI_age_sex_site.reset_index(inplace=True)
+
     
     if classif_from_differencem3m0 : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site"+str_WM+"_v4labels.csv")
     if classif_from_concat: # 91 subjects
@@ -677,8 +691,7 @@ def classification(nbfolds= 5, print_pvals=False, save_results=False, verbose=Tr
     # stratification 
     cv_test = PredefinedSplit(json_file=CV_DIR+'20_ml-classifLiResp_cv-5cv.json').split()
 
-    # df = df_ROI_age_sex_site.copy()
-    # cv_test = make_stratified_splitter(df, n_splits=5, cv_seed=11)
+    # cv_test = make_stratified_splitter(df_ROI_age_sex_site, n_splits=5, cv_seed=11)
 
     # cv_test = StratifiedKFold(n_splits=5, shuffle=True, random_state=cv_seed).split(X_arr, y_arr) --> tests sur whitening done with this
  

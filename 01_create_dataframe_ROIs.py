@@ -1,6 +1,6 @@
 import numpy as np, pandas as pd
 import xml.etree.ElementTree as ET
-
+import os
 from utils import get_rois
 
 #inputs
@@ -159,19 +159,76 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
     else : df_ROI_age_sex_site = df[all_rois_and_ids+["age","sex","site","y"]]
     df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
 
-    print(df_ROI_age_sex_site)
     if save:
         # save the df
         str_WM = "_WM_Vol" if WM else ""
         if longitudinal: filename = "df_ROI_age_sex_site_M00_M03"+str_WM+"_v4labels.csv"
         else : filename = "df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv"
+        # df_ROI_age_sex_site['site'] = 'site-' + df_ROI_age_sex_site['site'].astype(str)
+        df_ROI_age_sex_site['site'] = df_ROI_age_sex_site['site'].apply(lambda x: f"site-{x:02d}")
+
+        print(df_ROI_age_sex_site)
         df_ROI_age_sex_site.to_csv(DATA_DIR+filename, index=False)
         print("df saved to : ",filename)
 
+def m3minusm0(WM_roi = False):
+    """
+    Saves a df of M3-M0 ROI measures
+        save_m3_minus_m0_df (bool) : if True, save df of differences between m3 and m0 to csv. if False, don't. (no standard scaling at this point) 
+        WM_roi (bool) : white matter volumes only
+    """
+
+    if WM_roi : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site_WM_Vol_v4labels.csv"
+    else : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site_v4labels.csv"
+
+    if not os.path.exists(path_df_M3minusM0):
+        if WM_roi: df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03_WM_Vol_v4labels.csv")
+        else : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03_v4labels.csv")
+        dfROIM00 = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M00"].reset_index(drop=True)
+        dfROIM03 = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"].reset_index(drop=True)
+
+        # Merge M03 and M00 on participant_id
+        merged = pd.merge(dfROIM03, dfROIM00, on="participant_id", suffixes=("_M03", "_M00"))
+
+        list_ = ["y","age","sex","site"]
+        for l in list_:
+            assert (merged[l+'_M00'] == merged[l+'_M03']).all(), " issue with "+l+" between same subjects at M00 and M03"
+
+        columns_M03 = [col for col in merged.columns if col.endswith("_M03")]
+        columns_M00 = [col for col in merged.columns if col.endswith("_M00")]
+        common_columns = [col[:-4] for col in columns_M03 if col[:-4] + "_M00" in columns_M00]
+        print("common_columns ", len(common_columns)) # == 273 since there are 268 ROIs (134 GM and 134 CSF) and y (label), age, sex, site, session
+        print(merged)
+
+        # creating a df for differences of M03-M00
+        differences_df = pd.DataFrame({
+            col: merged[col + "_M03"] - merged[col + "_M00"] for col in common_columns if not col in ["age","sex","site","y","session"]
+        })
+
+        differences_df.insert(0, 'participant_id', merged['participant_id'])
+        differences_df["y"] = merged["y_M00"]
+        differences_df["age"] = merged["age_M00"]
+        differences_df["sex"] = merged["sex_M00"]
+        differences_df["site"] = merged["site_M00"]
+
+        print(differences_df)
+        # df_ROI_age_sex_site['site'] = 'site_' + df_ROI_age_sex_site['site'].astype(str)
+        differences_df.to_csv(path_df_M3minusM0,index=False)  
+
+    else : differences_df = pd.read_csv(path_df_M3minusM0)
+
+    print("differences grouped by label\n",differences_df[get_rois(WM=WM_roi)+["y"]].groupby("y").median())
+    differences_df = differences_df.drop("participant_id", axis=1)
+    print(differences_df)
 
 def main():
-    # save_df_ROI(WM=False, save=True) 
+    save_df_ROI(WM=False, save=True) 
     save_df_ROI(WM=False, save=True , longitudinal=True) 
+    save_df_ROI(WM=True, save=True) 
+    save_df_ROI(WM=True, save=True , longitudinal=True) 
+
+    m3minusm0(WM_roi = True)
+    m3minusm0()
 
 
 if __name__ == "__main__":

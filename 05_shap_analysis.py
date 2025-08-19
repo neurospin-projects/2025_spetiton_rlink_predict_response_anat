@@ -1,9 +1,9 @@
-import os, time, scipy, shap
+import os, shap
 import numpy as np
 import pandas as pd
 import nibabel as nib
 from utils import read_pkl, get_rois, save_pkl, round_sci
-from plots import plot_glassbrain_general
+# from plots import plot_glassbrain_general
 
 # inputs
 ROOT = "/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
@@ -31,36 +31,37 @@ def get_mean_abs_shap_array(shap_df):
         assert fold_shap.shape[1]==268, "there are 268 ROI"
         concat_test_subjects_shap_values.append(fold_shap) # add current fold's test set shap values to the list
         total_nb_subjects+=fold_shap.shape[0]
-    assert total_nb_subjects==116
+    assert total_nb_subjects==117
     concat_test_subjects_shap_values= np.concatenate(concat_test_subjects_shap_values,axis=0)
     mean_shap_across_all_folds = np.mean(np.abs(concat_test_subjects_shap_values), axis=0)
 
     return mean_shap_across_all_folds, concat_test_subjects_shap_values
 
-def create_shap_summary_df_h1_h0(nb_permutations=1000 , cv_folds_seed=1):
+def create_shap_summary_df_h1_h0(nb_permutations=1000):
     """
         creates and saves a dataframe of two columns "fold" and "mean_abs_shap"
         mean_abs_shap contains mean absolute shap values across all 5-CV folds
         fold is equal to 0 when there is no permutation of classification labels (correct labels) (h1)
         fold != 0 when there is a permuation of classification labels when computing the SHAP values (h0)
-        
     nb_permutations (int): nb of permutations 
-    cv_folds_seed (int) : 5-fold CV seed used to split data into 5 sets of train/test folds
     """
 
     df_all_shap = pd.DataFrame(columns=['fold', 'mean_abs_shap']) # df to fill up
 
     # get shap values computed with correct labels
-    shap_file = FEAT_IMPTCE_RES_DIR+"svm_shap_seed"+str(cv_folds_seed)+"_GRvsPaRNR_5fold.pkl"
+    shap_file = FEAT_IMPTCE_RES_DIR+"forest_shap_GRvsPaRNR_5fold_v4labels_CV_Edouard.pkl" 
     shap_df_correct_labels = read_pkl(shap_file)
+   
     mean_shap_across_all_folds, concatenated_shap = get_mean_abs_shap_array(shap_df_correct_labels)
 
     # save concatenates shap values and corresponding feature values for all test sets of the 5-fold CV 
     # to plot beeswarm shap summary plot
-    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00.csv")
+    df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_v4labels.csv")
+
     # get order of participant_ids when concatenating test sets of CV folds in order
-    folds_dict = read_pkl(FOLDS_DIR+"subjects_for_each_fold_GRvsPaRNR_5foldCV_seed_1.pkl")
+    folds_dict = read_pkl(FOLDS_DIR+"subjects_for_each_fold_GRvsPaRNR_5foldCV_v4labels_CV_Edouard.pkl")
     list_CV_test_participant_ids_in_order = []
+
     for i in range(5):
         list_CV_test_participant_ids_in_order+=folds_dict[i]["test_subjects_ids"].tolist()
 
@@ -68,19 +69,18 @@ def create_shap_summary_df_h1_h0(nb_permutations=1000 , cv_folds_seed=1):
     df_sorted = df_ROI_age_sex_site.loc[df_ROI_age_sex_site['participant_id'].map(order_dict).sort_values().index]
 
     dict_shap_and_features = {"shap values concatenated":concatenated_shap, "features concatenated": df_sorted[get_rois()].values}
-    path_dict_shap_and_features= FEAT_IMPTCE_RES_DIR+'dict_shap_and_features_concatenated'+str(nb_permutations)+'_random_permut.pkl'
+    path_dict_shap_and_features= FEAT_IMPTCE_RES_DIR+'dict_shap_and_features_concatenated'+str(nb_permutations)+'_random_permut_v4labels_CV_Edouard.pkl'
     
     # if file doesn't exist in pkl format, also save to pkl
     if not os.path.exists(path_dict_shap_and_features):
         save_pkl(dict_shap_and_features,path_dict_shap_and_features)
 
-    # put it under fold "0" of df_all_shap
+    # fill df_all_shap with fold 0 (correct labels) SHAP values
     df_all_shap = pd.concat([df_all_shap , pd.DataFrame([{"fold":0, 'mean_abs_shap':mean_shap_across_all_folds}])], axis=0)
 
-    # get shap values computed with nb_permutations permutations of labels
-    # save them under folds 1 to nb_permutations+1
+    # fill df_all_shap with randomly permuted labels SHAP values (folds 1 to 1000)
     for i in range(1 , nb_permutations+1):
-        shap_file_random_permut = FEAT_IMPTCE_RES_DIR+"svm_shap_seed"+str(cv_folds_seed)+"_GRvsPaRNR_5fold_random_permutations_with_seed_"+str(i)+"_of_labels.pkl"
+        shap_file_random_permut = FEAT_IMPTCE_RES_DIR+"forest_shap_GRvsPaRNR_5fold_random_permutations_with_seed_"+str(i)+"_of_labels_v4labels_CV_Edouard.pkl"
         shap_df_rd_permut = read_pkl(shap_file_random_permut)
         mean_shap_across_all_folds, _ = get_mean_abs_shap_array(shap_df_rd_permut)
         df_all_shap = pd.concat([df_all_shap , pd.DataFrame([{"fold":i, 'mean_abs_shap':mean_shap_across_all_folds}])], axis=0)
@@ -88,8 +88,8 @@ def create_shap_summary_df_h1_h0(nb_permutations=1000 , cv_folds_seed=1):
     print(df_all_shap)
 
     # filename to save dataframe summarizing SHAP values 
-    path_shap_summary = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut.xlsx'
-    path_shap_summary_pkl = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut.pkl'
+    path_shap_summary = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut_v4labels_CV_Edouard.xlsx'
+    path_shap_summary_pkl = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut_v4labels_CV_Edouard.pkl'
 
     # if file doesn't exist, save to excel
     if not os.path.exists(path_shap_summary):
@@ -99,9 +99,8 @@ def create_shap_summary_df_h1_h0(nb_permutations=1000 , cv_folds_seed=1):
         save_pkl(df_all_shap,path_shap_summary_pkl)
 
 def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
-
     # retrieve mean absolute shap values for h1 (fold 0) and h0 (folds 1 to 1001)
-    path_shap_summary = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut.pkl'
+    path_shap_summary = FEAT_IMPTCE_RES_DIR+'SHAP_summary_res_age_sex_site_h0h1_'+str(nb_permutations)+'_random_permut_v4labels_CV_Edouard.pkl'
     df_all_shap = read_pkl(path_shap_summary)
 
     roi_names = get_rois()
@@ -110,7 +109,7 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     # Expand the "mean_abs_shap" arrays into individual columns for each ROI
     shap_expanded_df = pd.DataFrame(df_all_shap["mean_abs_shap"].tolist(), columns=roi_names)
     shap_expanded_df.insert(0, "fold", df_all_shap["fold"].values) # add fold col back
-    # print(shap_expanded_df)
+    print(shap_expanded_df)
 
     # Extract SHAP values for the true model (h1 = fold 0)
     row_h1_values = shap_expanded_df[shap_expanded_df["fold"] == 0].iloc[0]
@@ -126,6 +125,10 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     pvalues_row = pvalues.to_frame().T  # convert to single-row DataFrame
     pvalues_row.insert(0, "fold", "pvalues") # add "pvalues" to "fold" column
     shap_expanded_df = pd.concat([shap_expanded_df, pvalues_row], ignore_index=True)
+
+    # print(shap_expanded_df[["fold","Left Amygdala_GM_Vol","Right Amygdala_GM_Vol", "Left Hippocampus_GM_Vol","Right Hippocampus_GM_Vol"]])
+    # pvalues for left amygdala, right amygdala, left hippocampus and right hippocampus:
+    # 0.031031               0.176176                 0.069069                  0.545546
 
     # --- Compute max SHAP across ROIs for each permutation (needed for maxT correction) ---
     # Skip the h1 row (fold 0), only consider folds 1 to 1000
@@ -174,18 +177,25 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     shap_signficiant_ROI.at[0, "fold"] = "mean_abs_shap"
 
     print(shap_signficiant_ROI)
-    quit()
 
-    significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut.xlsx'
+    list_shap_significant = list(shap_signficiant_ROI.columns)
+    for roi in list_shap_significant:
+        if roi!="fold":
+            print(roi)
+
+    significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut_v4labels.xlsx'
     # if file doesn't exist, save to excel
     if not os.path.exists(significant_shap_file):
-        # atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
-        # roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
-        # rois = list(shap_signficiant_ROI.columns)
-        # rois = [roi for roi in rois if roi!="fold"]
-        # roi_names = ["fold"]+[roi_names_map[val] for val in rois]
-        # shap_signficiant_ROI.columns = roi_names
-        shap_signficiant_ROI.to_excel(significant_shap_file, index=False)    
+        shap_signficiant_ROI.to_excel(significant_shap_file, index=False)   
+    # else :
+    #     atlas_df = pd.read_csv(ROOT+"data/processed/lobes_Neuromorphometrics_with_dfROI_correspondencies.csv", sep=';')
+    #     roi_names_map = dict(zip(atlas_df['ROI_Neuromorphometrics_labels'], atlas_df['ROIname']))
+    #     rois = list(shap_signficiant_ROI.columns)
+    #     rois = [roi for roi in rois if roi!="fold"]
+    #     roi_names = ["fold"]+[roi_names_map[val] for val in rois]
+    #     shap_signficiant_ROI.columns = roi_names
+    #     for r in roi_names: 
+    #         if r!="fold": print(roi_names)
     
     mean_abs_significant_uncorrected_shap_values = shap_signficiant_ROI[shap_signficiant_ROI["fold"] == "mean_abs_shap"].iloc[0]
     roi_dict = {col: mean_abs_significant_uncorrected_shap_values[col] for col in shap_signficiant_ROI.columns if col != "fold"}
@@ -195,18 +205,18 @@ def get_pvalues(nb_permutations=1000, alpha=0.05, glassbrain=False):
     for k,v in roi_dict.items():
         print(k,"  ",v)
 
-    if glassbrain :
-        blue_roi = ["Left TrIFG triangular part of the inferior frontal gyrus_GM_Vol","Right Hippocampus_GM_Vol",\
-                    "Left Hippocampus_GM_Vol","Right AOrG anterior orbital gyrus_GM_Vol","Right Ventral DC_GM_Vol",\
-                        "Left Amygdala_GM_Vol", "Right Amygdala_GM_Vol"]
-        plot_glassbrain_general(roi_dict, r"uncorrected significant ROI for $\alpha = 0.05$",list_negative=blue_roi)
+    # if glassbrain :
+    #     blue_roi = ["Left TrIFG triangular part of the inferior frontal gyrus_GM_Vol","Right Hippocampus_GM_Vol",\
+    #                 "Left Hippocampus_GM_Vol","Right AOrG anterior orbital gyrus_GM_Vol","Right Ventral DC_GM_Vol",\
+    #                     "Left Amygdala_GM_Vol", "Right Amygdala_GM_Vol"]
+    #     plot_glassbrain_general(roi_dict, r"uncorrected significant ROI for $\alpha = 0.05$",list_negative=blue_roi)
 
 
 def plot_beeswarm(nb_permutations=1000, only_significant=False):
 
     all_rois = get_rois()
+    path_dict_shap_and_features= FEAT_IMPTCE_RES_DIR+'dict_shap_and_features_concatenated'+str(nb_permutations)+'_random_permut_v4labels_CV_Edouard.pkl'
 
-    path_dict_shap_and_features= FEAT_IMPTCE_RES_DIR+'dict_shap_and_features_concatenated'+str(nb_permutations)+'_random_permut.pkl'
     dict_shap_and_features = read_pkl(path_dict_shap_and_features)
 
     shap_arr = dict_shap_and_features["shap values concatenated"]
@@ -217,7 +227,7 @@ def plot_beeswarm(nb_permutations=1000, only_significant=False):
 
     print(dict_shap_and_features.keys())
     if only_significant: 
-        significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut.xlsx'
+        significant_shap_file = FEAT_IMPTCE_RES_DIR+'significant_shap_mean_abs_value_pvalues_'+str(nb_permutations)+'_random_permut_v4labels.xlsx'
         significant_shap = pd.read_excel(significant_shap_file)
         significant_roi = [roi for roi in list(significant_shap.columns) if roi!="fold"]
 
@@ -245,8 +255,12 @@ def plot_beeswarm(nb_permutations=1000, only_significant=False):
                         feature_names=shap_arrays_negatedCSF_df.columns)
 
 def main():
+    # create_shap_summary_df_h1_h0(nb_permutations=1000 )
+    # get_pvalues(glassbrain=False)
+    # quit()
     # plot_beeswarm()
-    get_pvalues(glassbrain=False)
+    plot_beeswarm(nb_permutations=1000, only_significant=True)
+    # 
 
 if __name__ == "__main__":
     main()

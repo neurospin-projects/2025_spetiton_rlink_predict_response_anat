@@ -8,8 +8,9 @@ from sklearn.model_selection import train_test_split
 from nilearn import plotting, image
 import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedShuffleSplit
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
-
+import umap
 from nilearn.image import resample_to_img
 sys.path.append('/neurospin/psy_sbox/temp_sara/')
 from pylearn_mulm.mulm.residualizer import Residualizer
@@ -26,6 +27,7 @@ BRAIN_MASK_PATH = DATA_DIR+"mni_cerebrum-gm-mask_1.5mm.nii.gz"
 ATLAS_DF = DATA_DIR+"lobes_Neuromorphometrics_with_dfROI_correspondencies.csv"
 OPENBHB_DATAFRAME = DATA_DIR+"OpenBHB_roi.csv"
 
+BIOBDBSNIP_OG_DATA_DIR = "/neurospin/signatures/psysbox_analyses/202104_biobd-bsnip_cat12vbm_predict-dx/"
 
 def get_lists_roi_in_both_openBHB_and_rlink():
     """
@@ -66,18 +68,22 @@ def get_lists_roi_in_both_openBHB_and_rlink():
 def strat_stats(subset, name):
     mean_age = subset['age'].mean()
     prop_female = subset['sex'].mean()  # sex==1 is female
-    sites = list(subset['site'].unique())
-    print("sites ",sites)
-    print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}")
+    if "dx" in subset.columns:
+        prop_BD = subset["dx"].mean()
+        print("nb sites :",len(list(subset["site"].unique())))
+        print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}, proportion of BD (dx==1): {prop_BD:.2f}")
+    else:
+        print(f"{name} set - mean age: {mean_age:.2f}, proportion female (sex==1): {prop_female:.2f}")
 
-def stratified_split(df_input, test_size=0.2, random_state=42, verbose=True):
+def stratified_split(df_input, test_size=0.2, random_state=42, verbose: bool = True, \
+                     min_site_size: int = 70, q_age: int = 3):
+    
     # Bin continuous 'age' into quantiles for stratification
     df = df_input.copy()
-    df['age_bin'] = pd.qcut(df['age'], q=3, duplicates='drop')
+    df['age_bin'] = pd.qcut(df['age'], q=q_age, duplicates='drop')
 
     # Bin site: group rare sites
     site_counts = df['site'].value_counts()
-    min_site_size=70
     rare_sites = site_counts[site_counts < min_site_size].index
     df['site_binned'] = df['site'].replace(rare_sites, 'other')
 
@@ -99,10 +105,10 @@ def stratified_split(df_input, test_size=0.2, random_state=42, verbose=True):
     df_test = df.loc[test_idx].drop(columns=['age_bin', 'strata'])
 
     if verbose:
-        strat_stats(df_train, "Train")
-        strat_stats(df_test, "Test")
+        print("Train size:", len(train_idx), "Test size:", len(test_idx))
 
     return df_train, df_test, train_idx, test_idx
+
 
 
 def scale_rois_with_tiv(dfROI, all_rois, target_tiv=1500.0):
@@ -159,19 +165,38 @@ def binarization(X_train, X_test, y_train):
 
     return X_train_bin, X_test_bin
 
-def get_scores(pipeline,X_test_res, X_train_res):
-    if hasattr(pipeline, 'decision_function'):
-        score_test = pipeline.decision_function(X_test_res)
-        score_train = pipeline.decision_function(X_train_res)
-    elif hasattr(pipeline, 'predict_log_proba'):
-        score_test = pipeline.predict_log_proba(X_test_res)[:, 1]
-        score_train = pipeline.predict_log_proba(X_train_res)[:, 1]
-    elif hasattr(pipeline, 'predict_proba'):
+# def get_scores(pipeline,X_test_res, X_train_res):
+#     if hasattr(pipeline, 'decision_function'):
+#         score_test = pipeline.decision_function(X_test_res)
+#         score_train = pipeline.decision_function(X_train_res)
+#     elif hasattr(pipeline, 'predict_log_proba'):
+#         score_test = pipeline.predict_log_proba(X_test_res)[:, 1]
+#         score_train = pipeline.predict_log_proba(X_train_res)[:, 1]
+#     elif hasattr(pipeline, 'predict_proba'):
+#         score_test = pipeline.predict_proba(X_test_res)[:, 1]
+#         score_train = pipeline.predict_proba(X_train_res)[:, 1]
+#     else:
+#         raise RuntimeError("There is an issue with the classifier.")
+#     return score_test, score_train
+
+def get_scores(pipeline, X_test_res, X_train_res):
+    try:
         score_test = pipeline.predict_proba(X_test_res)[:, 1]
         score_train = pipeline.predict_proba(X_train_res)[:, 1]
-    else:
-        raise RuntimeError("There is an issue with the classifier.")
+    except AttributeError:
+        score_test = score_train = None
+        try:
+            score_test = pipeline.predict_log_proba(X_test_res)[:, 1]
+            score_train = pipeline.predict_log_proba(X_train_res)[:, 1]
+        except AttributeError:
+            try:
+                score_test = pipeline.decision_function(X_test_res)
+                score_train = pipeline.decision_function(X_train_res)
+            except AttributeError:
+                raise RuntimeError("Classifier does not implement a supported scoring method.")
+
     return score_test, score_train
+
 
 def get_scaled_data(res="no_res", dataframe=None, WM_roi=False):
     assert res in ["res_age_sex_site", "res_age_sex", "no_res"],"not the right residualization option for parameter 'res'!"
@@ -248,6 +273,52 @@ def get_rois(WM=False):
         assert len(all_rois)==134*2,"wrong number of ROIs" # 134 ROI by hemisphere in Neuromorphometrics
 
     return all_rois
+
+def get_pair_dict_CSF_GM():
+    """
+    returns dict of "roi name":(idx GM, idx CSF)
+    for all rois of get_rois() and idx GM is the index of that roi in the list and idx CSF the index of that roi in the list
+    """
+
+    pair_dict = {}
+    gm_indices = {}
+    csf_indices = {}
+
+    for idx, name in enumerate(get_rois(WM=False)):
+        if name.endswith("_GM_Vol"):
+            base_name = name[:-7]  # remove "_GM_Vol"
+            gm_indices[base_name] = idx
+        elif name.endswith("_CSF_Vol"):
+            base_name = name[:-8]  # remove "_CSF_Vol"
+            csf_indices[base_name] = idx
+
+    # Merge the matching pairs
+    for region in gm_indices:
+        if region in csf_indices:
+            pair_dict[region] = [gm_indices[region], csf_indices[region]]
+    return pair_dict
+
+def make_lr_pairs(roi_names=get_rois()):
+    # roi_names: list of strings like "Left Amygdala", "Right Amygdala", "Hippocampus"
+    pairs = {}
+    # We'll store indices of left and right for each base roi name
+    left_dict = {}
+    right_dict = {}
+
+    for idx, name in enumerate(roi_names):
+        if name.startswith("Left "):
+            base = name[len("Left "):]
+            left_dict[base] = idx
+        elif name.startswith("Right "):
+            base = name[len("Right "):]
+            right_dict[base] = idx
+
+    # Now find pairs that exist in both left and right
+    for base in set(left_dict) & set(right_dict):
+        pairs[base] = (left_dict[base], right_dict[base])
+
+    return pairs
+
 
 def round_sci(x, sig=2):
     """
@@ -483,7 +554,7 @@ def get_ROI_info_from_voxels(img=None):
     display.savefig('test.png')
 
 
-def make_stratified_splitter(df, n_splits=5, cv_seed=11, qbins=4):
+def make_stratified_splitter(df, n_splits=5, cv_seed=11, qbins=5):
     """
     Returns a generator yielding (train_idx, test_idx) for stratified folds,
    
@@ -507,3 +578,189 @@ def make_stratified_splitter(df, n_splits=5, cv_seed=11, qbins=4):
     skf = MultilabelStratifiedKFold(n_splits=n_splits, shuffle=True, random_state=cv_seed)
 
     yield from skf.split(X, strat_matrix)
+
+
+def plot_umap(features, labels=None, title="UMAP Projection"):
+    """
+    features: 2D numpy array, shape (n_samples, n_features)
+    labels: optional, array-like, shape (n_samples,), for coloring points
+    """
+    reducer = umap.UMAP(n_components=2, random_state=42)
+    embedding = reducer.fit_transform(features)
+    
+    plt.figure(figsize=(8,6))
+    if labels is not None:
+        scatter = plt.scatter(embedding[:,0], embedding[:,1], c=labels, cmap='Spectral', s=10, alpha=0.8)
+        plt.colorbar(scatter, label="Label")
+    else:
+        plt.scatter(embedding[:,0], embedding[:,1], s=10, alpha=0.8)
+    
+    plt.title(title)
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
+    plt.grid(True)
+    plt.show()
+
+def get_bootstrapping_tr_te(indices_nonresponders, indices_goodresponders, seed=42):
+    """
+    function that samples (with replacement = bootstrapps) randomly as many non responders as good responders of Li in its training and test sets
+    """
+    np.random.seed(seed)
+
+    boot_tr_NR = np.random.choice(indices_nonresponders, size=len(indices_nonresponders), replace=True)
+    # return elements in indices_nonresponders (NR and PaR) that are not in boot_tr_NR
+    boot_te_NR = np.setdiff1d(indices_nonresponders, boot_tr_NR, assume_unique=False)
+
+    # same thing for GR
+    boot_tr_GR = np.random.choice(indices_goodresponders, size=len(indices_goodresponders), replace=True)
+    boot_te_GR = np.setdiff1d(indices_goodresponders, boot_tr_GR, assume_unique=False)
+
+    boot_tr = np.concatenate([boot_tr_NR,boot_tr_GR], axis=0)
+    boot_te = np.concatenate([boot_te_NR,boot_te_GR], axis=0)
+
+    return boot_tr, boot_te
+
+def plot_feature_pair_before_after(roiname, X, X_whitened, title_suffix="", CSF_GM=False, RL=False):
+    """
+        roiname has to be the roiname from get_pair_dict_CSF_GM or make_lr_pairs
+    """
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+    if CSF_GM : i,j=get_pair_dict_CSF_GM()[roiname]
+    if RL : i,j=make_lr_pairs()[roiname]
+    # Before whitening
+    axs[0].scatter(X[:, i], X[:, j], alpha=0.6)
+    axs[0].set_title(f"Original ({roiname}) - {title_suffix}")
+    if RL:
+        axs[0].set_xlabel(f"Right")
+        axs[0].set_ylabel(f"Left")
+    if CSF_GM:
+        axs[0].set_xlabel(f"GM volume")
+        axs[0].set_ylabel(f"CSF volume")
+
+    # After whitening
+    axs[1].scatter(X_whitened[:, i], X_whitened[:, j], alpha=0.6, color='green')
+    axs[1].set_title(f"Whitened ({roiname}) - {title_suffix}")
+    if RL:
+        axs[1].set_xlabel(f"Right")
+        axs[1].set_ylabel(f"Left")
+    if CSF_GM:
+        axs[1].set_xlabel(f"GM volume")
+        axs[1].set_ylabel(f"CSF volume")
+
+    plt.tight_layout()
+    # plt.show()
+    if CSF_GM : plt.savefig("plot_CSF_GM_"+roiname+".png", dpi=300, bbox_inches='tight') 
+    if RL : plt.savefig("plot_Right_Left_"+roiname+".png", dpi=300, bbox_inches='tight') 
+
+    plt.close()
+
+
+
+def stratified_train_test_split_dict(df_input, test_size=0.2, random_state=42, verbose=True,
+                                     min_site_size=40, q_age=2, save=False):
+    
+    df = df_input.copy()
+    df['age_bin'] = pd.qcut(df['age'], q=q_age, duplicates='drop')
+    
+    site_counts = df['site'].value_counts()
+    if verbose:
+        print(site_counts)
+    rare_sites = site_counts[site_counts < min_site_size].index
+
+    df['site_binned'] = df['site'].replace(rare_sites, 'other')
+
+    df['strata'] = (
+        df['age_bin'].astype(str) + "_" +
+        df['sex'].astype(str) + "_" +
+        df['dx'].astype(str) + "_" +
+        df['site_binned'].astype(str)
+    )
+
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    
+    folds_dict = {}
+    for train_idx, test_idx in sss.split(df, df['strata']):
+        if verbose:
+            print(f"Train size = {len(train_idx)}, Test size = {len(test_idx)}")
+        folds_dict["fold_0"] = (train_idx, test_idx)
+    
+    df.drop(columns=['age_bin', 'site_binned', 'strata'], inplace=True)
+    
+    if save:
+        save_pkl(
+            folds_dict,
+            f"stratified_train_test_split_dict_testsize{test_size}_seed{random_state}_minsite{min_site_size}_qage{q_age}.pkl"
+        )
+    
+    return folds_dict
+
+
+def stratified_kfold_split_dict(df_input, n_splits=5, random_state=42, verbose=True,
+                                min_site_size=60, q_age=3, save=False):
+    df = df_input.copy()
+    df['age_bin'] = pd.qcut(df['age'], q=q_age, duplicates='drop')
+    
+    site_counts = df['site'].value_counts()
+    if verbose: print(site_counts)
+    rare_sites = site_counts[site_counts < min_site_size].index
+
+    df['site_binned'] = df['site'].replace(rare_sites, 'other')
+
+    df['strata'] = (
+        df['age_bin'].astype(str) + "_" +
+        df['sex'].astype(str) + "_" +
+        df['dx'].astype(str) + "_" +
+        df['site_binned'].astype(str)
+    )
+    
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    
+    folds_dict = {}
+    for fold_idx, (train_idx, test_idx) in enumerate(skf.split(df, df['strata'])):
+        if verbose:
+            print(f"Fold {fold_idx + 1}: Train size = {len(train_idx)}, Test size = {len(test_idx)}")
+        folds_dict[f"fold_{fold_idx}"] = (train_idx, test_idx)
+    
+    # Drop temporary columns before returning, if you want
+    df.drop(columns=['age_bin', 'site_binned', 'strata'], inplace=True)
+    if save:
+        save_pkl(folds_dict,"stratified_"+str(n_splits)+"folds_splot_dict_"+str(random_state)+
+                 "_rdm_seed_minsite"+str(min_site_size)+"_q_age_"+str(q_age)+".pkl")
+
+    return folds_dict
+
+
+def main():
+    import json
+    roidf = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_v4labels.csv")
+    print(roidf)
+    cv_file = ROOT+"03_classif_rois/20_ml-classifLiResp_cv-5cv.json"
+    with open(cv_file,'r') as file:
+        cv = json.load(file)
+    # print(cv)
+    print(len(cv), type(cv))
+    print(np.shape(cv[0]))
+
+
+    quit()
+    for i in range(5):
+        dat = read_pkl("/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/reports/transfer_bdvshc/densenet121_vbm_bipolar/Test_"+str(i)+"_densenet121_vbm_bipolar_epoch199.pkl")
+        print(dat["metrics"])
+    quit()
+    participants_filename = os.path.join(BIOBDBSNIP_OG_DATA_DIR, "biobd-bsnip_cat12vbm_participants.csv")
+    participants = pd.read_csv(participants_filename) 
+    print(participants)
+    participants=participants[participants["site"]!="sandiego"]
+    participants.reset_index(inplace=True)
+    print(participants["site"].unique())
+
+
+    folds_dict = stratified_train_test_split_dict(participants, save=True, min_site_size=60)
+    for i in [0]:
+        strat_stats(participants.iloc[folds_dict["fold_"+str(i)][0]],"train")
+        strat_stats(participants.iloc[folds_dict["fold_"+str(i)][1]],"test")
+
+
+
+if __name__ == '__main__':
+    main()

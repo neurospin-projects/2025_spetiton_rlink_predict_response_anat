@@ -138,6 +138,8 @@ def train_brain_age_model_with_openBHB(residualize=True, plot=True, model="LR", 
             scoring='r2'  
         )
 
+    
+
     pipeline = make_pipeline(StandardScaler(), age_regression_model)
     # y_tr = shuffle(y_tr, random_state=42) # sanity check
 

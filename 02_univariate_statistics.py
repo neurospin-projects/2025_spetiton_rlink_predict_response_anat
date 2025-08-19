@@ -28,12 +28,12 @@ def m3minusm0(save_m3_minus_m0_df=False,WM_roi = False):
         WM_roi (bool) : white matter volumes only
     """
 
-    if WM_roi : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site_WM_Vol.csv"
-    else : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site.csv"
+    if WM_roi : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site_WM_Vol_v4labels.csv"
+    else : path_df_M3minusM0 = DATA_DIR+"df_ROI_M03_minus_M00_age_sex_site_v4labels.csv"
 
     if not os.path.exists(path_df_M3minusM0):
-        if WM_roi: df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03_WM_Vol.csv")
-        else : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03.csv")
+        if WM_roi: df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03_WM_Vol_v4labels.csv")
+        else : df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00_M03_v4labels.csv")
         dfROIM00 = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M00"].reset_index(drop=True)
         dfROIM03 = df_ROI_age_sex_site[df_ROI_age_sex_site["session"]=="M03"].reset_index(drop=True)
 
@@ -181,9 +181,9 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
     df_file = None
 
     if m0:
-        df_file = f"{DATA_DIR}df_ROI_age_sex_site_M00{str_WM}.csv"
+        df_file = f"{DATA_DIR}df_ROI_age_sex_site_M00{str_WM}_v4labels.csv"
     elif m3minusm0:
-        df_file = f"{DATA_DIR}df_ROI_M03_minus_M00_age_sex_site{str_WM}.csv"
+        df_file = f"{DATA_DIR}df_ROI_M03_minus_M00_age_sex_site{str_WM}_v4labels.csv"
     else:
         raise ValueError("You must select either m0=True or m3minusm0=True")
 
@@ -191,7 +191,7 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
     significant_rois=None
 
     if only_significant_roi and not WM_roi:
-        significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut.xlsx")
+        significant_df = pd.read_excel(FEAT_IMPTCE_RES_DIR+"significant_shap_mean_abs_value_pvalues_1000_random_permut_v4labels.xlsx")
         significant_rois = [roi for roi in list(significant_df.columns) if roi!="fold"]
         df_X = df_X[significant_rois + ["age", "sex", "site", "y"]]
     else: df_X = df_X[get_rois(WM=WM_roi) + ["age", "sex", "site", "y"]]
@@ -217,33 +217,50 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
     df_str = "intercept" if intercept_analysis else "response"
     covariates = ["sex", "age"] + (["site"] if include_site else [])
     formula_base = " + ".join(["1"] + covariates) if intercept_analysis else " + ".join(["y"] + covariates)
-    
+
     for roi in roi_columns:
         model = smf.ols(f"{roi} ~ {formula_base}", df_X).fit()
         aov = sm.stats.anova_lm(model, typ=2)
         # print(model.model.data.param_names) # if intercept_analysis False : \
         # outputs : ['Intercept', 'y', 'sex', 'age', 'site'], if intercep_analysis True, \
         # outputs : ["Intercept","sex","age","site"]
+        if include_site:
+            terms = [term for term in model.tvalues.index if any(cov in term for cov in [y_str] + covariates)]
+            tvals = model.tvalues[terms].tolist()
+            pvals = model.pvalues[terms].tolist()
 
-        tvals = model.tvalues[[y_str] + covariates].tolist()
-        pvals = model.pvalues[[y_str] + covariates].tolist()
+        else:
+            tvals = model.tvalues[[y_str] + covariates].tolist()
+            pvals = model.pvalues[[y_str] + covariates].tolist()
 
         aov_stats = []
         if not intercept_analysis:
             aov_stats += [aov.loc[y_str, "F"], aov.loc[y_str, "PR(>F)"]]
+
         for cov in covariates:
             aov_stats += [aov.loc[cov, "F"], aov.loc[cov, "PR(>F)"]]
 
         stats.append([roi] + tvals + pvals + aov_stats)
 
     # Build column names dynamically
-    cols = ['ROI'] + \
-           [f"{df_str}_t"] + [f"{c}_t" for c in covariates] + \
-           [f"{df_str}_p"] + [f"{c}_p" for c in covariates]
+    if include_site:
+        cols = ['ROI'] + [f"{c}_t" for c in terms] + [f"{c}_p" for c in terms]
+        cols = [f"{df_str}_t" if x == y_str+"_t" else x for x in cols]
+        cols = [f"{df_str}_p" if x == y_str+"_p" else x for x in cols]
+
+    else:
+        cols = ['ROI'] + \
+            [f"{df_str}_t"] + [f"{c}_t" for c in covariates] + \
+            [f"{df_str}_p"] + [f"{c}_p" for c in covariates]
+    
     if not intercept_analysis:
         cols += [f"{df_str}_f", f"{df_str}_p_anova"]
     cols += [f"{c}_f_anova" for c in covariates] + [f"{c}_p_anova" for c in covariates]
 
+    # print(np.shape(cols),"\n",cols)
+    # print(np.shape(stats), "  ", np.shape(stats[0]))
+    # print("terms ",np.shape(terms))
+    
     stats_df = pd.DataFrame(stats, columns=cols)
     stats_df['ROI'] = stats_df['ROI'].replace(string_dict)
     df_X.rename(columns=string_dict, inplace=True)
@@ -270,6 +287,11 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
     print(f"\nNumber of ROI with {df_str} p < 0.05:", (target_p < 0.05).sum())
     print(f"Bonferroni corrected p < 0.05:", (pcor_bonf < 0.05).sum())
     print(f"FDR corrected p < 0.05:", (pcor_fdr_bh < 0.05).sum())
+    t_col = f"{df_str}_t"
+
+    print(stats_df.loc[stats_df[f"{df_str}_p"] < 0.05][["ROI", f"{df_str}_p",t_col, f"{df_str}_pcor_fdr_bh"]])
+
+    quit()
 
     t_col = f"{df_str}_t"
     p_col = f"{df_str}_pcor_bonferroni"
@@ -300,7 +322,7 @@ def perform_tests(res="no_res", save=False, m0=False, m3minusm0=False, include_s
             save_name = "m3_minus_m0_" + save_name
             if intercept_analysis:
                 save_name += "_intercept_analysis_of_changem3m0"
-        if westfall_and_young: stats_df_with_tmax.to_excel(STATS_UNIV_RES_DIR + save_name + str_WM + ".xlsx", index=False)
+        if westfall_and_young: stats_df_with_tmax.to_excel(STATS_UNIV_RES_DIR + save_name + str_WM + "_v4labels.xlsx", index=False)
         else : stats_df.to_excel(STATS_UNIV_RES_DIR + save_name + str_WM + ".xlsx", index=False)
 
 def print_roi_names_long(stats_df, p_col, df_str, t_col):
@@ -365,9 +387,11 @@ def get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=False, interc
 def main():
 
     # perform_tests(res="no_res", save=True, m0=False, m3minusm0=True, include_site=True, intercept_analysis=False, WM_roi=True, only_significant_roi=False)
-
-    get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=True, intercept_analysis=False, \
-                  WM_roi=True, only_significant_roi=False,  four_rois=False)
+    perform_tests(res="no_res", save=False, m0=True, m3minusm0=False, include_site=True, intercept_analysis=False, \
+                  WM_roi=False, only_significant_roi=False, westfall_and_young =False)
+    
+    # get_glass_brain_t_statistics(res="no_res", m0=False, m3minusm0=True, intercept_analysis=False, \
+    #               WM_roi=True, only_significant_roi=False,  four_rois=False)
     quit()
 
     

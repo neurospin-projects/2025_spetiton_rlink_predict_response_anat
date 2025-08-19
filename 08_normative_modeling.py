@@ -67,7 +67,6 @@ print(f"Condition number: {cond_number_te_zscores:.2e}")
 """
 
 # RLINK tests
-
 def get_M0_M3():
     """
         returns two dataframes of ROIs at baseline (M0) and 3 months after li intake (M3) 
