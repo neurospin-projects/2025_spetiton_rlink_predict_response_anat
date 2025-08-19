@@ -6,10 +6,13 @@ rsync -azvu --exclude study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4
 
 '''
 
+################################################################################
 # %% 1. Initialization 
 # ====================
 
-from init import *
+from init import config
+from ml_utils import get_X, get_y
+from ml_utils import create_print_log
 
 # Default output prefix
 config['prefix'] = "030_classif_rois_repeatedcv"
@@ -39,7 +42,7 @@ print_log(config)
 
 ################################################################################
 # %% 2. Read Data
-# ------------
+# ===============
 
 data = pd.read_csv(config['input_data'])
 
@@ -262,8 +265,8 @@ if "output_repeatedcv" in config:
     
 
 ################################################################################
-# %% Choose a correctly stratified 5CV split based on min SSE and save it
-# =======================================================================
+# %% 5. Choose a correctly stratified 5CV split based on min SSE and save it
+# ==========================================================================
 
 if 'output_cv_test' in config:
     # Chose a 5CV split based on min SSE
