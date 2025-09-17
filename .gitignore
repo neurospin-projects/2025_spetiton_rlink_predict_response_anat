@@ -1,1 +1,10 @@
 PCNtoolkit/
+*.png
+data/
+edouard/
+reports/
+models/
+oldies/
+test*.py
+mrs_*
+

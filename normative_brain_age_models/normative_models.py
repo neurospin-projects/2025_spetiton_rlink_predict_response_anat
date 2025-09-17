@@ -1,9 +1,8 @@
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import BayesianRidge
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, SplineTransformer
 from sklearn.pipeline import make_pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import SplineTransformer
 from scipy.optimize import minimize
 from scipy.stats import norm
 import numpy as np
@@ -45,10 +44,6 @@ class NormativeBLR(BaseEstimator, RegressorMixin):
         - Y_roi: shape (n_samples, n_rois)
         """
         n_rois = Y_roi.shape[1]
-        self.models_ = []
-        self.stds_ = []
-        self.epsilons_ = []
-        self.betas_ = []
 
         for i in range(n_rois):
             y = Y_roi[:, i]
@@ -69,7 +64,8 @@ class NormativeBLR(BaseEstimator, RegressorMixin):
             if self.bsplines:
                 preprocessor = ColumnTransformer([
                     ('spline_age', SplineTransformer(degree=3, n_knots=self.n_knots), [0]),
-                    ('passthrough_sex', 'passthrough', [1]) # ignore age and sex columns, output without applying any transformation on these columns
+                    ('onehot_sex', OneHotEncoder(drop='if_binary'), [1]) # treat sex as categorical variable
+                    # ('passthrough_sex', 'passthrough', [1]) # ignore age and sex columns, output without applying any transformation on these columns
                 ])
             else:
                 preprocessor = 'passthrough'
@@ -126,8 +122,7 @@ class NormativeBLR(BaseEstimator, RegressorMixin):
                 if Y_roi is None:
                     raise ValueError("Y_roi must be provided to compute z-scores")
                 residuals = Y_roi[:, i] - y_pred
-                resid_std = residuals.std(ddof=1)  # use ddof=1 for sample std
-                z = residuals / resid_std
+                z = residuals / self.stds_[i] 
                 zscores.append(z)
 
         preds = np.vstack(preds).T  # shape (n_samples, n_rois)
