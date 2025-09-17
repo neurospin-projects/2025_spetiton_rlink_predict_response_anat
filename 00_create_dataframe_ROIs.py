@@ -24,7 +24,7 @@ difference btw labels at v3 and v4: at m0, one unclassified subject has been cla
 def get_clinical_info(longitudinal, listparticipants):
     # female = 1, male = 0
     df_info_age_sex = pd.read_csv(CLINICAL_DATA_DF_FILE, sep='\t')
-    df_info_age_sex["sex"] = df_info_age_sex["sex"].replace({"M": 0, "F": 1})
+    df_info_age_sex["sex"] = df_info_age_sex["sex"].replace({"M": "male", "F": "female"})
     df_info_age_sex = df_info_age_sex.rename(columns={'ses-M00_center': "site_M00"})
     df_info_age_sex = df_info_age_sex.rename(columns={'ses-M03_center': "site_M03"})
     df_info_age_sex = df_info_age_sex[["participant_id","sex","age","site_M00","site_M03"]]
@@ -38,7 +38,6 @@ def get_clinical_info(longitudinal, listparticipants):
                 df_info_age_sex.loc[df_info_age_sex["participant_id"] == p, "site_M03"].values[0]
             ), f"wrong sites for participant {p}: site_M00 = {df_info_age_sex.loc[df_info_age_sex['participant_id'] == p, 'site_M00'].values[0]}, \
                 site_M03 = {df_info_age_sex.loc[df_info_age_sex['participant_id'] == p, 'site_M03'].values[0]}"
-
         
     df_info_age_sex = df_info_age_sex.rename(columns={'site_M00': "site"})
     df_info_age_sex.drop("site_M03", axis=1, inplace=True)
@@ -168,13 +167,17 @@ def save_df_ROI(verbose=True, longitudinal=False, save=False, WM=False):
         df_ROI_age_sex_site['site'] = df_ROI_age_sex_site['site'].apply(lambda x: f"site-{x:02d}")
 
         print(df_ROI_age_sex_site)
+        df_ROI_age_sex_site.rename(columns={"y": "response"}, inplace=True)
+
         df_ROI_age_sex_site.to_csv(DATA_DIR+filename, index=False)
         print("df saved to : ",filename)
+        
+
 
 def m3minusm0(WM_roi = False):
     """
     Saves a df of M3-M0 ROI measures
-        save_m3_minus_m0_df (bool) : if True, save df of differences between m3 and m0 to csv. if False, don't. (no standard scaling at this point) 
+        save_m3_minus_m0_df (bool) : if True, save df of differences between m3 and m0 to csv. if False, don't. 
         WM_roi (bool) : white matter volumes only
     """
 
@@ -190,23 +193,23 @@ def m3minusm0(WM_roi = False):
         # Merge M03 and M00 on participant_id
         merged = pd.merge(dfROIM03, dfROIM00, on="participant_id", suffixes=("_M03", "_M00"))
 
-        list_ = ["y","age","sex","site"]
+        list_ = ["response","age","sex","site"]
         for l in list_:
             assert (merged[l+'_M00'] == merged[l+'_M03']).all(), " issue with "+l+" between same subjects at M00 and M03"
 
         columns_M03 = [col for col in merged.columns if col.endswith("_M03")]
         columns_M00 = [col for col in merged.columns if col.endswith("_M00")]
         common_columns = [col[:-4] for col in columns_M03 if col[:-4] + "_M00" in columns_M00]
-        print("common_columns ", len(common_columns)) # == 273 since there are 268 ROIs (134 GM and 134 CSF) and y (label), age, sex, site, session
+        print("common_columns ", len(common_columns)) # == 273 since there are 268 ROIs (134 GM and 134 CSF) and response (label), age, sex, site, session
         print(merged)
 
         # creating a df for differences of M03-M00
         differences_df = pd.DataFrame({
-            col: merged[col + "_M03"] - merged[col + "_M00"] for col in common_columns if not col in ["age","sex","site","y","session"]
+            col: merged[col + "_M03"] - merged[col + "_M00"] for col in common_columns if not col in ["age","sex","site","response","session"]
         })
 
         differences_df.insert(0, 'participant_id', merged['participant_id'])
-        differences_df["y"] = merged["y_M00"]
+        differences_df["response"] = merged["response_M00"]
         differences_df["age"] = merged["age_M00"]
         differences_df["sex"] = merged["sex_M00"]
         differences_df["site"] = merged["site_M00"]
@@ -217,18 +220,18 @@ def m3minusm0(WM_roi = False):
 
     else : differences_df = pd.read_csv(path_df_M3minusM0)
 
-    print("differences grouped by label\n",differences_df[get_rois(WM=WM_roi)+["y"]].groupby("y").median())
+    print("differences grouped by label\n",differences_df[get_rois(WM=WM_roi)+["response"]].groupby("response").median())
     differences_df = differences_df.drop("participant_id", axis=1)
     print(differences_df)
 
 def main():
-    save_df_ROI(WM=False, save=True) 
+    # save_df_ROI(WM=False, save=True) 
     save_df_ROI(WM=False, save=True , longitudinal=True) 
-    save_df_ROI(WM=True, save=True) 
-    save_df_ROI(WM=True, save=True , longitudinal=True) 
+    save_df_ROI(WM=False, save=True) 
+    # save_df_ROI(WM=True, save=True , longitudinal=True) 
 
-    m3minusm0(WM_roi = True)
-    m3minusm0()
+    m3minusm0(WM_roi = False)
+    # m3minusm0()
 
 
 if __name__ == "__main__":

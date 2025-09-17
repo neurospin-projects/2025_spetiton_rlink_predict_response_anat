@@ -1,27 +1,23 @@
 import pandas as pd, numpy as np
-from utils import make_stratified_splitter
 from collections import defaultdict
 from nitk.ml_utils.cross_validation import PredefinedSplit
 
 # inputs
 ROOT = "/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/"
 DATA_DIR = ROOT+"data/processed/"
-CV_DIR = "/neurospin/signatures/2025_spetiton_rlink_predict_response_anat/models/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4/"
+CV_DIR = ROOT+"03_classif_rois/"
 
-# seed=11 # seed=11 gives ROC-AUC = 69% (mean), and highest balanced accuracy over train set
 str_WM=""
 df_ROI_age_sex_site = pd.read_csv(DATA_DIR+"df_ROI_age_sex_site_M00"+str_WM+"_v4labels.csv")
 df_ROI_age_sex_site["y"] = df_ROI_age_sex_site["y"].replace({"GR": 1, "PaR": 0, "NR": 0})
 df_ROI_age_sex_site = df_ROI_age_sex_site.reset_index(drop=True)
-
 
 # To track how often each site is in test sets
 site_test_counts = defaultdict(int)
 df = df_ROI_age_sex_site.copy()
 prop_GR_tot = round(df['y'].mean(),2) 
 # print("proportion GR total ",prop_GR_tot)
-# cv_test = PredefinedSplit(json_file=CV_DIR+'supervised_classification_config_cv5test.json').split()
-cv_test = make_stratified_splitter(df, n_splits=5, cv_seed=11)
+cv_test = PredefinedSplit(json_file=CV_DIR+'03_classif_rois/stratified-5cv.json').split()
 
 print(df["site"].value_counts())
 print("\n\n")
@@ -45,8 +41,8 @@ for fold_idx, (train_idx, test_idx) in enumerate(cv_test):
 
     print(f"Train sites ({len(train_sites)}): {sorted(train_sites)}")
     print(f"Test sites ({len(test_sites)}): {sorted(test_sites)}")
-    print(f"❗ Missing in train: {sorted(missing_in_train)}")
-    print(f"❗ Missing in test: {sorted(missing_in_test)}")
+    print(f"Missing in train: {sorted(missing_in_train)}")
+    print(f"Missing in test: {sorted(missing_in_test)}")
     print("Train age mean ",train_age_mean)
     print("Train proportion female ", prop_female_tr)
     print("Train proportion GR ", prop_GR_tr)
