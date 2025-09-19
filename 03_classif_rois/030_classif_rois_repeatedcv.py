@@ -9,44 +9,35 @@ rsync -azvu --exclude study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4
 ################################################################################
 # %% 1. Initialization 
 # ====================
-import os.path
-from datetime import datetime
-import numpy as np
-import pandas as pd
 
-from sklearn.model_selection import StratifiedKFold, LeaveOneOut
-
-
-from config import config, cv_val
-
+from init import config
+from ml_utils import get_X, get_y
 from ml_utils import create_print_log
-from ml_utils import get_y, get_X, get_residualizer
-from ml_utils import dict_cartesian_product, run_parallel, run_sequential
-from ml_utils import get_linear_coefficients, pipeline_behead
-from ml_utils import PredefinedSplit
-from ml_utils import GroupFeatureTransformer
-from ml_utils import fit_predict_binary_classif, ClassificationScorer
 
 # Default output prefix
-config['prefix'] = "031_classif_rois_resampling-scheme"
+config['prefix'] = "030_classif_rois_repeatedcv"
 config['output_repeatedcv'] = os.path.join(config['output_models'], config['prefix'] + "_repeatedcv.xlsx")
-
+config['output_cv_test'] =  "stratified-5cv.json"
+ 
 # Set output paths
 config['log_filename'] = config['prefix'] + ".log"
 config['cachedir'] = config['prefix'] + ".cachedir"
 
 # Print log function
-if 'log_filename' not in config:
-    print_log = create_print_log(config['log_filename'])
-    print_log('###################################################################')
-    print_log('## %s' % datetime.now().strftime("%Y-%m-%d %H:%M"))
-    print_log(config)
+print_log = create_print_log(config['log_filename'])
+print_log('###################################################################')
+print_log('## %s' % datetime.now().strftime("%Y-%m-%d %H:%M"))
+print_log(config)
 
 
-# Create cachedir
+
 from joblib import Memory
-if 'cachedir' not in config:
-    memory = Memory(config['cachedir'], verbose=0)
+memory = Memory(config['cachedir'], verbose=0)
+
+
+print_log('###################################################################')
+print_log('## %s' % datetime.now().strftime("%Y-%m-%d %H:%M"))
+print_log(config)
 
 
 ################################################################################
@@ -277,7 +268,7 @@ if "output_repeatedcv" in config:
 # %% 5. Choose a correctly stratified 5CV split based on min SSE and save it
 # ==========================================================================
 
-if 'cv_test' in config:
+if 'output_cv_test' in config:
     # Chose a 5CV split based on min SSE
    
 
@@ -286,8 +277,8 @@ if 'cv_test' in config:
     mskf = MultilabelStratifiedKFold(n_splits=5, shuffle=True, random_state=55)
     cv_test = PredefinedSplit([(train, test) for train, test in mskf.split(X, groups_df[factors])])
     #cv_test = StratifiedKFold(n_splits=n_splits_test, shuffle=True, random_state=4)
-    cv_test.to_json(config['cv_test'])
-    # cv_test = PredefinedSplit(json_file=config['cv_test'])
+    cv_test.to_json(config['output_cv_test'])
+    # cv_test = PredefinedSplit(json_file=config['output_cv_test'])
 
     cv_stratification_metric(groups_df, factors=factors, cv=cv_test)
 
@@ -312,6 +303,4 @@ if 'cv_test' in config:
         cv_df.loc[test, "fold"] = fold 
     print(ct)
 
-    cv_df.to_csv(config['cv_test'].replace('.json', '.csv'), index=False)
-
-
+    cv_df.to_csv(config['output_cv_test'].replace('.json', '.csv'), index=False)

@@ -20,12 +20,9 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn import preprocessing
 from sklearn.pipeline import make_pipeline
 
-from ml_utils import GroupFeatureTransformer
-
 def make_models(n_jobs_grid_search, cv_val,
                 residualization_formula=None,
-                residualizer_estimator=None,
-                roi_groups=None):
+                residualizer_estimator=None):
     """_summary_
 
     Parameters
@@ -77,7 +74,7 @@ def make_models(n_jobs_grid_search, cv_val,
         'model-svmrbfcv':[
             # preprocessing.StandardScaler(),
             preprocessing.MinMaxScaler(),
-            GridSearchCV(svm.SVC(class_weight='balanced', probability=True),
+            GridSearchCV(svm.SVC(class_weight='balanced'),
                          # {'kernel': ['poly', 'rbf'], 'C': 10. ** np.arange(-3, 3)},
                          {'kernel': ['rbf'], 'C': 10. ** np.arange(-1, 2)},
                          cv=cv_val, n_jobs=n_jobs_grid_search)],
@@ -101,13 +98,6 @@ def make_models(n_jobs_grid_search, cv_val,
     #         GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
     #                      param_grid=mlp_param_grid,
     #                      cv=cv_val, n_jobs=n_jobs_grid_search)]
-    
-            'model-grpRoiLda+lrl2':[
-                GroupFeatureTransformer(roi_groups,  "lda"),
-                preprocessing.StandardScaler(),
-                GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
-                            {'C': 10. ** np.arange(-3, 1)},
-                            cv=cv_val, n_jobs=5, scoring='balanced_accuracy')],
     }
 
     if residualization_formula:
