@@ -9,7 +9,7 @@ import numpy as np
 
 
 
-# Warping utilities
+# warping functions
 def warp_sinh_arcsinh(y, epsilon=0.0, b=1.0):
     return np.sinh(b * np.arcsinh(y) + epsilon * b)
 
@@ -25,7 +25,6 @@ def log_likelihood_sinh_arcsinh(params, y):
     dg_dy = b * np.cosh(b * np.arcsinh(y) + epsilon * b) / np.sqrt(1 + y**2)
     return -np.sum(logpdf + np.log(dg_dy))
 
-# Main Normative model class
 class NormativeBLR(BaseEstimator, RegressorMixin):
     def __init__(self, warp=False, bsplines=True, n_knots=3):
         self.warp = warp
@@ -99,7 +98,7 @@ class NormativeBLR(BaseEstimator, RegressorMixin):
 
         Parameters:
         - X_covariates: shape (n_samples, 2)
-        - Y_roi: optional, shape (n_samples, n_rois)
+        - Y_roi: shape (n_samples, n_rois)
         - return_zscores: if True, return z-scores (requires Y_roi)
 
         Returns:
