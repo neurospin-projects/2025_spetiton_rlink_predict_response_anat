@@ -28,11 +28,7 @@ from ml_utils import GroupFeatureTransformer
 from ml_utils import fit_predict_binary_classif, ClassificationScorer
 
 # Default output prefix
-config['prefix'] = "032_classif_rois_test-models"
-
-# Set output paths
-# config['log_filename'] = config['prefix'] + ".log"
-# config['cachedir'] = config['prefix'] + ".cachedir"
+config['prefix'] = "30_classification"
 
 
 # Print log function
@@ -51,7 +47,7 @@ if 'cachedir' in config:
 
 
 ################################################################################
-# %% 2. Read Data
+# %% 2. Load Data
 # ===============
 
 data = pd.read_csv(config['input_data'])
@@ -91,25 +87,27 @@ X_[:, (csf_indices)] *= -1
 assert np.all(X == residualizer_estimator.pack(Z, X_))
 
 
-
 ################################################################################
-# %% Test many models using cross_validate (compute the recalls)
+# %% Run models using cross_validate (compute the recalls)
 # ==============================================================
 
 from sklearn.model_selection import cross_validate
 from sklearn.metrics import make_scorer, recall_score, balanced_accuracy_score, roc_auc_score
 from ml_utils import group_by_roi
 roi_groups = group_by_roi(feature_columns)
+# Convert roi_groups to indices
 roi_groups = {roi:[feature_columns.index(x) for x in cols] for roi, cols in roi_groups.items()}
 
 
 # Models
 
-from classification_models import make_models
+#from classification_models import make_models
+from ml_utils import make_models
+
 models = make_models(n_jobs_grid_search=5, cv_val=cv_val,
-                        residualization_formula=residualization_formula,
-                        residualizer_estimator=residualizer_estimator,
-                        roi_groups=roi_groups)
+                    residualization_formula=residualization_formula,
+                    residualizer_estimator=residualizer_estimator,
+                    roi_groups=roi_groups)
 
 
 # Load the CV test split
@@ -158,15 +156,12 @@ scores_df = pd.DataFrame(scores, columns=['model'] + metrics)
 print(scores_df)
 
 """
-                                     model  test_balanced_accuracy  test_roc_auc  test_recall_class_0  test_recall_class_1
-0          model-lrl2cv_resid-age+sex+site                0.691230      0.691230             0.635238             0.747222
-1        model-lrenetcv_resid-age+sex+site                0.531111      0.531111             0.906667             0.155556
-2        model-svmrbfcv_resid-age+sex+site                0.612500      0.612500             0.700000             0.525000
-3        model-forestcv_resid-age+sex+site                0.549524      0.549524             0.865714             0.233333
-4            model-gbcv_resid-age+sex+site                0.445952      0.445952             0.541905             0.350000
-5  model-grpRoiLda+lrl2_resid-age+sex+site                0.703175      0.703175             0.661905             0.744444
+                               model  test_balanced_accuracy  test_roc_auc  test_recall_class_0  test_recall_class_1
+0    model-lrl2cv_resid-age+sex+site                0.691230      0.691230             0.635238             0.747222
+1  model-lrenetcv_resid-age+sex+site                0.500000      0.500000             1.000000             0.000000
+2  model-svmrbfcv_resid-age+sex+site                0.580476      0.580476             0.727619             0.433333
+3  model-forestcv_resid-age+sex+site                0.549524      0.549524             0.865714             0.233333
+4      model-gbcv_resid-age+sex+site                0.445952      0.445952             0.541905             0.350000
+5          mlp_cv_resid-age+sex+site                0.537500      0.537500             1.000000             0.075000
+6  grpRoiLda+lrl2_resid-age+sex+site                0.703175      0.703175             0.661905             0.744444
 """
-
-
-
-# %%

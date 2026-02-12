@@ -1359,10 +1359,11 @@ mlp_param_grid = {"hidden_layer_sizes":
                     "activation": ["relu"], "solver": ["sgd"], 'alpha': [0.0001]}
 
 
-def make_models_new(n_jobs_grid_search, cv_val,
+def make_models(n_jobs_grid_search, cv_val,
                 scoring='accuracy',
                 residualization_formula=None,
-                residualizer_estimator=None):
+                residualizer_estimator=None,
+                roi_groups=None):
     """Make models
 
     Parameters
@@ -1440,7 +1441,14 @@ def make_models_new(n_jobs_grid_search, cv_val,
             # preprocessing.MinMaxScaler(),
             GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
                          param_grid=mlp_param_grid,
-                         cv=cv_val, n_jobs=n_jobs_grid_search)]
+                         cv=cv_val, n_jobs=n_jobs_grid_search)],
+        
+        'grpRoiLda+lrl2':[
+            GroupFeatureTransformer(roi_groups,  "lda"),
+            preprocessing.StandardScaler(),
+            GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
+                        {'C': 10. ** np.arange(-3, 1)},
+                        cv=cv_val, n_jobs=5, scoring='balanced_accuracy')]
     }
 
     if residualization_formula:
