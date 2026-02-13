@@ -1436,14 +1436,14 @@ def make_models(n_jobs_grid_search, cv_val,
                          param_grid={"n_estimators": [10, 100]},
                          cv=cv_val, n_jobs=n_jobs_grid_search, scoring=scoring)],
 
-        'mlp_cv':[
+        'model-mlp_cv':[
             preprocessing.StandardScaler(),
             # preprocessing.MinMaxScaler(),
             GridSearchCV(estimator=MLPClassifier(random_state=1, max_iter=200, tol=0.01),
                          param_grid=mlp_param_grid,
                          cv=cv_val, n_jobs=n_jobs_grid_search)],
         
-        'grpRoiLda+lrl2':[
+        'model-grpRoiLda+lrl2':[
             GroupFeatureTransformer(roi_groups,  "lda"),
             preprocessing.StandardScaler(),
             GridSearchCV(lm.LogisticRegression(fit_intercept=False, class_weight='balanced'),
