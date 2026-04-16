@@ -147,7 +147,8 @@ for mod, model in models.items():
         estimator=model, X=X, y=y,
         cv=cv_test, scoring=scorers,
         return_train_score=False, n_jobs=5, verbose=50)
-
+    print(cv_res)
+    quit()
     # Print average metrics
     scores.append([mod] + average_metrics(cv_res, metrics))
 

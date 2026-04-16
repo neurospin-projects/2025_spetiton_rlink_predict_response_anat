@@ -15,6 +15,9 @@ import seaborn as sns
 import scipy.stats
 from statsmodels.stats.multitest import multipletests
 
+# mulm
+sys.path.append('/neurospin/signatures/temp_sara/')
+from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
 # Univariate statistics
 # import statsmodels.api as sm
 # import statsmodels.formula.api as smf
@@ -251,8 +254,11 @@ def get_residualizer(data, X, residualization_columns, print_log=print):
     Array, ResidualizerEstimator, str
         Array 
     """
-    from mulm.residualizer import Residualizer
-    from mulm.residualizer import ResidualizerEstimator
+    # mulm
+    sys.path.append('/neurospin/signatures/temp_sara/')
+    from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
+    # from mulm.residualizer import Residualizer
+    # from mulm.residualizer import ResidualizerEstimator
     
     print_log('\n# Residualization')
     # Residualizer
