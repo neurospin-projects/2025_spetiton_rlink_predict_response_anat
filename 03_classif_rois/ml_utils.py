@@ -16,8 +16,19 @@ import scipy.stats
 from statsmodels.stats.multitest import multipletests
 
 # mulm
-sys.path.append('/neurospin/signatures/temp_sara/')
-from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
+# sys.path.append('/neurospin/signatures/temp_sara/')
+from mulm.residualizer import Residualizer, ResidualizerEstimator
+# Install pylearn-mulm
+
+# [pylearn-mulm](https://github.com/neurospin/pylearn-mulm)
+
+# ```
+# wget https://github.com/neurospin/pylearn-mulm/archive/refs/heads/master.zip
+# unzip master.zip
+# ln -s pylearn-mulm-master/mulm ./
+# rm master.zip
+# ```
+
 # Univariate statistics
 # import statsmodels.api as sm
 # import statsmodels.formula.api as smf
@@ -166,116 +177,111 @@ def describe_categorical(df):
 ################################################################################
 # %% Read data utils
 
-def get_y(data, target_column, remap_dict=None, print_log=print):
-    """_summary_
+# def get_y(data, target_column, remap_dict=None, print_log=print):
+#     """_summary_
 
-    Parameters
-    ----------
-    data : _type_
-        _description_
-    target_column : _type_
-        _description_
-    remap_dict: dict
-        remap target, defualts None
-    print_log : _type_, optional
-        _description_, by default print
+#     Parameters
+#     ----------
+#     data : _type_
+#         _description_
+#     target_column : _type_
+#         _description_
+#     remap_dict: dict
+#         remap target, defualts None
+#     print_log : _type_, optional
+#         _description_, by default print
 
-    Returns
-    -------
-    _type_
-        _description_
+#     Returns
+#     -------
+#     _type_
+#         _description_
 
-    Yields
-    ------
-    _type_
-        _description_
-    """
-    print_log('\n# y (target)\n"%s", counts:' % target_column)
-    print_log(describe_categorical(data[target_column]))
+#     Yields
+#     ------
+#     _type_
+#         _description_
+#     """
+#     print_log('\n# y (target)\n"%s", counts:' % target_column)
+#     print_log(describe_categorical(data[target_column]))
 
-    if remap_dict:
-        y = data[target_column].map(remap_dict)
-        print_log('After remapping, counts:')
-        print_log(describe_categorical(y))
-    else:
-        y = data[target_column]
-    return y
-
-
-def get_X(data, input_columns, print_log=print):
-    """Get input Data. Perform dummy codings for categorical variables
-
-    Parameters
-    ----------
-    data : DataFrame
-        Input dataFrame
-    input_columns : list
-        input columns
-    print_log: callable function, default print
-
-    Returns
-    -------
-        pd.DataFrame: input Data
-    """
-    X = data[input_columns]
-    ncol = X.shape[1]
-
-    print_log('\n# X (Input data)')
-    print_log(X.describe(include='all').T)
-
-    categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-    if categorical_cols:
-        print_log("\nCategorical columns:", categorical_cols)
-        for v in categorical_cols:
-            print_log(v, describe_categorical(data[v]))
-        X = pd.get_dummies(X, dtype=int)
-        print_log('\nAfter coding')
-        print_log(X.describe(include='all').T)
-        print_log('%i dummies variable created' %  (X.shape[1] - ncol))
-
-    return X
+#     if remap_dict:
+#         y = data[target_column].map(remap_dict)
+#         print_log('After remapping, counts:')
+#         print_log(describe_categorical(y))
+#     else:
+#         y = data[target_column]
+#     return y
 
 
-def get_residualizer(data, X, residualization_columns, print_log=print):
-    """Residualiser
+# def get_X(data, input_columns, print_log=print):
+#     """Get input Data. Perform dummy codings for categorical variables
 
-    Parameters
-    ----------
-    data : DataFrame
-        input DataFrame
-    X, : numpy Array
-    residualization_columns : list of columns
-        residualization variables
-    print_log : callable, optional
-        print function, by default print
+#     Parameters
+#     ----------
+#     data : DataFrame
+#         Input dataFrame
+#     input_columns : list
+#         input columns
+#     print_log: callable function, default print
 
-    Returns
-    -------
-    Array, ResidualizerEstimator, str
-        Array 
-    """
-    # mulm
-    sys.path.append('/neurospin/signatures/temp_sara/')
-    from pylearn_mulm.mulm.residualizer import Residualizer, ResidualizerEstimator
-    # from mulm.residualizer import Residualizer
-    # from mulm.residualizer import ResidualizerEstimator
+#     Returns
+#     -------
+#         pd.DataFrame: input Data
+#     """
+#     X = data[input_columns]
+#     ncol = X.shape[1]
+
+#     print_log('\n# X (Input data)')
+#     print_log(X.describe(include='all').T)
+
+#     categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+#     if categorical_cols:
+#         print_log("\nCategorical columns:", categorical_cols)
+#         for v in categorical_cols:
+#             print_log(v, describe_categorical(data[v]))
+#         X = pd.get_dummies(X, dtype=int)
+#         print_log('\nAfter coding')
+#         print_log(X.describe(include='all').T)
+#         print_log('%i dummies variable created' %  (X.shape[1] - ncol))
+
+#     return X
+
+
+# def get_residualizer(data, X, residualization_columns, print_log=print):
+#     """Residualiser
+
+#     Parameters
+#     ----------
+#     data : DataFrame
+#         input DataFrame
+#     X, : numpy Array
+#     residualization_columns : list of columns
+#         residualization variables
+#     print_log : callable, optional
+#         print function, by default print
+
+#     Returns
+#     -------
+#     Array, ResidualizerEstimator, str
+#         Array 
+#     """
     
-    print_log('\n# Residualization')
-    # Residualizer
-    residualization_formula = "+".join(residualization_columns)
-    residualizer = Residualizer(data=data, formula_res=residualization_formula)
+#     print_log('\n# Residualization')
+#     # Residualizer
+#     residualization_formula = "+".join(residualization_columns)
+#     residualizer = Residualizer(data=data, formula_res=residualization_formula)
 
-    # Extract design matrix and pack it with X
-    Z = residualizer.get_design_mat(data=data)
-    residualizer_estimator = ResidualizerEstimator(residualizer)
+#     # Extract design matrix and pack it with X
+#     Z = residualizer.get_design_mat(data=data)
+#     residualizer_estimator = ResidualizerEstimator(residualizer)
     
-    # Repack Z with X
-    X = residualizer_estimator.pack(Z, X)
+#     # Repack Z with X
+#     X = residualizer_estimator.pack(Z, X)
 
-    print_log(residualization_formula)
-    print_log("Z.shape:", Z.shape)
+#     print_log(residualization_formula)
+#     print_log("Z.shape:", Z.shape)
     
-    return X, residualizer_estimator, residualization_formula
+#     return X, residualizer_estimator, residualization_formula
 
 
 def group_by_roi(feature_columns):
@@ -325,45 +331,45 @@ def group_by_roi(feature_columns):
 
 from itertools import product
 
-def create_print_log(log_filename=None):
-    """
-    Creates and returns a print_log function that logs messages to a file if specified.
+# def create_print_log(log_filename=None):
+#     """
+#     Creates and returns a print_log function that logs messages to a file if specified.
 
-    The returned function, `print_log`, will print messages to a specified log file if 'log_filename'
-    is present in the config dictionary. Otherwise, it will print messages to the standard output.
+#     The returned function, `print_log`, will print messages to a specified log file if 'log_filename'
+#     is present in the config dictionary. Otherwise, it will print messages to the standard output.
 
-    Parameters:
-    -----------
-    config : dict
-        A dictionary containing configuration settings. It should contain a key 'log_filename'
-        with the path to the log file if logging to a file is desired.
+#     Parameters:
+#     -----------
+#     config : dict
+#         A dictionary containing configuration settings. It should contain a key 'log_filename'
+#         with the path to the log file if logging to a file is desired.
 
-    Returns:
-    --------
-    function
-        A function that prints messages to the log file or standard output based on the config.
+#     Returns:
+#     --------
+#     function
+#         A function that prints messages to the log file or standard output based on the config.
 
-    Example:
-    --------
-    >>> print_log = create_print_log(log_filename='log.log')
-    >>> print_log("This will be written to the log file.")
-    """
-    def print_log(*args):
-        """
-        Prints the provided arguments to the log file specified in the config or to the standard output.
+#     Example:
+#     --------
+#     >>> print_log = create_print_log(log_filename='log.log')
+#     >>> print_log("This will be written to the log file.")
+#     """
+#     def print_log(*args):
+#         """
+#         Prints the provided arguments to the log file specified in the config or to the standard output.
 
-        Parameters:
-        -----------
-        *args : list
-            Variable length argument list containing the items to be printed.
-        """
-        if log_filename is not None:
-            with open(log_filename, "a") as f:
-                print(*args, file=f)
-        else:
-            print(*args)
+#         Parameters:
+#         -----------
+#         *args : list
+#             Variable length argument list containing the items to be printed.
+#         """
+#         if log_filename is not None:
+#             with open(log_filename, "a") as f:
+#                 print(*args, file=f)
+#         else:
+#             print(*args)
 
-    return print_log
+#     return print_log
 
 
 def dict_cartesian_product(*dicts):
