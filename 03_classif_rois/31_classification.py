@@ -18,6 +18,7 @@ from sklearn.model_selection import StratifiedKFold, LeaveOneOut
 from config import config, cv_val
 from ml_utils import PredefinedSplit
 from mulm.residualizer.residualizer import Residualizer, ResidualizerEstimator
+from utils.sklearn_utils import classification_report_cv
 
 
 ################################################################################
@@ -47,10 +48,6 @@ csf_indices = np.array([i for i, col in enumerate(feature_columns) if 'CSF' in c
 X[:, (csf_indices)] *= -1
 
 assert X.shape[1] == len(feature_columns)  == 268 # Check that the number of columns is correct
-
-################################################################################
-# %% 
-
 
 
 
@@ -131,7 +128,6 @@ def average_metrics(cv_res, metrics):
 
 # Evaluate each model using cross-validation
 # and stack the average metrics
-from utils.sklearn_utils import classification_report_cv
 
 rows = []
 rows_historical = []
