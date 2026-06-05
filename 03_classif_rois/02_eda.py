@@ -44,12 +44,13 @@ from utils.eda import (descriptive_stats, plot_correlation,
 
 from config import config
 
+INPUT_DATA = './data/processed/roi-cat12vbm/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-5.csv'
 
 ################################################################################
 # %% Load Data
 # ============
 
-data = pd.read_csv(config['input_data'])
+data = pd.read_csv(INPUT_DATA)
 
 # Select Input = dataframe - (target + drop + residualization)
 feature_columns = [c for c in data.columns if c not in [config['target']] + \
@@ -84,10 +85,21 @@ for cls, cnt in counts.items():
 #   Class 1: 43  (36.8 %)
 
 quant_df, cat_df, pub_desc             = descriptive_stats(data.drop(columns=['participant_id'], errors='ignore'), max_cat_unique=2)
-corr_mat, pub_corr                     = plot_correlation(X_df, figscale=5.0, filename="reports/eda_correlation.png")
+
+# Reorder features by grouping by ROI and plotting correlation again with reordered features
+from ml_utils import group_by_roi
+
+roi_groups = group_by_roi(feature_columns)
+ordered_features = [feat for features in roi_groups.values() for feat in features]
+X_df = X_df[ordered_features]
+corr_mat, pub_corr                     = plot_correlation(X_df[ordered_features],figscale=5.0, filename="reports/eda_correlation.png")
 cluster_df, pub_dend                   = plot_feature_dendrogram(X_df, filename="reports/eda_dendrogram.png")
-corr_mat_reordered, _           = plot_correlation(X_df[cluster_df["feature"]], figscale=5.0, filename="reports/eda_correlation_reordered.png")
 pub_corr_reordered = pub_dend
+
+
+corr_mat_reordered, _           = plot_correlation(X_df[ordered_features], figscale=5.0, filename="reports/eda_correlation_reordered.png")
+corr_mat_reordered.columns
+
 scree_df, elbow_idx, thresh_results, pub_pca = plot_pca_components(X_df, filename="reports/eda_pca_components.png")
 
 
@@ -131,7 +143,6 @@ X_df_ha = X_df[hipp_amyg_cols]
 
 corr_mat_ha, _         = plot_correlation(X_df_ha, annot=True, linewidths=1, figscale=1.0, filename="reports/eda_correlation_hipp_amyg.png")
 cluster_df_ha, _       = plot_feature_dendrogram(X_df_ha, filename="reports/eda_dendrogram_hipp_amyg.png")
-corr_mat_reordered_ha, _ = plot_correlation(X_df_ha[cluster_df_ha["feature"]], annot=True, linewidths=1, figscale=1.0, filename="reports/eda_correlation_reordered_hipp_amyg.png")
 scree_df_ha, _, _, _   = plot_pca_components(X_df_ha, filename="reports/eda_pca_components_hipp_amyg.png")
 
 
@@ -275,9 +286,10 @@ axes[3].set_title("Coloured by response")
 axes[3].legend()
 _pc_labels(axes[3])
 
-plt.suptitle(f"PC1–PC2 scatter plots (outliers removed, n={mask_clean.sum()})",
+plt.suptitle(f"PC1–PC2 scatter plots",
              fontsize=14, fontweight="bold", y=1.01)
-plt.tight_layout()
+# plt.suptitle(f"PC1–PC2 scatter plots (outliers removed, n={mask_clean.sum()})",
+#             fontsize=14, fontweight="bold", y=1.01)plt.tight_layout()
 plt.savefig("reports/eda_pca_scatter.png", dpi=150, bbox_inches="tight")
 plt.savefig("reports/eda_pca_scatter.pdf", bbox_inches="tight")
 plt.show()
@@ -297,3 +309,5 @@ print(pca_stats_df[["v1", "v2", "test", "stat", "dof", "pval", "descriptive"]].t
 pca_stats_df.to_excel("reports/eda_pca_stats.xlsx", index=False)
 pca_stats_df.to_csv("reports/eda_pca_stats.csv", index=False)
 print("Saved: reports/eda_pca_stats.xlsx / .csv")
+
+# %%

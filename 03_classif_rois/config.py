@@ -71,7 +71,7 @@ config = {
     "input_data" : "./data/processed/roi-cat12vbm/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-4.csv",
     "cv_test": "stratified-5cv.json",
     # Paths
-    "LD_LIBRARY_PATH": ["/home/ed203246/git/nitk"],
+    # "LD_LIBRARY_PATH": ["/home/ed203246/git/nitk"],
     #"models_path": "./classification_models.py"
     # Output directories
     'output_models': "./models",

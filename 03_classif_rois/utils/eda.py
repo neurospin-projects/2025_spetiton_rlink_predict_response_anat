@@ -151,6 +151,7 @@ def plot_correlation(X_df: pd.DataFrame,
     
    ax.set_title(title, fontsize=13, fontweight="bold")
    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+   print(ax.get_xticklabels())
    plt.tight_layout()
    if filename is not None:
       plt.savefig(filename, dpi=150, bbox_inches="tight")
@@ -160,22 +161,32 @@ def plot_correlation(X_df: pd.DataFrame,
    # ── Publication text ───────────────────────────────────────────────────
    vals    = corr_mat.values
    mask_ut = np.triu(np.ones_like(vals, dtype=bool), k=1)
-   upper    = np.abs(vals[mask_ut])
-   n_strong = int((upper > 0.5).sum())
-   n_pairs  = len(upper)
-   ut_idx   = np.argmax(upper)
+   upper_signed = vals[mask_ut]          # signed values (upper triangle)
+   upper_abs    = np.abs(upper_signed)   # absolute values for magnitude stats
+
+   n_pairs  = len(upper_signed)
+   n_strong = int((upper_abs > 0.5).sum())
+   r_min    = float(upper_signed.min())
+   r_max_s  = float(upper_signed.max())
+   r_mean   = float(upper_signed.mean())
+   r_median = float(np.median(upper_signed))
+
+   ut_idx     = np.argmax(upper_abs)
    feat_pairs = [(corr_mat.index[i], corr_mat.columns[j])
-                  for i, j in zip(*np.where(mask_ut))]
+                 for i, j in zip(*np.where(mask_ut))]
    strongest  = feat_pairs[ut_idx]
-   r_max      = corr_mat.loc[strongest[0], strongest[1]]
+   r_strongest = corr_mat.loc[strongest[0], strongest[1]]
 
    methods = (
-       f"Pairwise {corr.capitalize()} correlation coefficients were computed between all features."
+       f"Pairwise {corr.capitalize()} correlation coefficients were computed between all features "
+       f"({n_pairs} unique pairs)."
    )
    results = (
-        f"Among the {n_pairs} unique feature pairs, {n_strong} showed a strong {corr.capitalize()} "
-        f"correlation (|r| > 0.50). The strongest correlation was observed between "
-        f"{strongest[0]} and {strongest[1]} (r = {r_max:.2f})."
+       f"Pairwise {corr.capitalize()} correlations ranged from {r_min:.2f} to {r_max_s:.2f} "
+       f"(mean = {r_mean:.2f}, median = {r_median:.2f}). "
+       f"{n_strong} of {n_pairs} pairs ({100*n_strong/n_pairs:.1f}%) showed a strong correlation "
+       f"(|r| > 0.50). The largest absolute correlation was between "
+       f"{strongest[0]} and {strongest[1]} (r = {r_strongest:.2f})."
    )
    pub = _pub(methods, results)
    return corr_mat, pub
