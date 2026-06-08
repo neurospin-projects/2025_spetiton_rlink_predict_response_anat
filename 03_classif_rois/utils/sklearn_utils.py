@@ -288,13 +288,13 @@ def classification_report_cv(X: np.ndarray,
     ]
 
     rows = [
-        ("Balanced Accuracy", ba_fold,   ba_pooled,                                      ba_pval_pooled,  ba_pval_fold),
         ("ROC-AUC",           auc_fold,  auc_pooled,                                     auc_pval_pooled, auc_pval_fold),
+        ("Balanced Accuracy", ba_fold,   ba_pooled,                                      ba_pval_pooled,  ba_pval_fold),
         ("Precision",         prec_fold, precision_score(y, y_pred_cv, zero_division=0), np.nan,          np.nan),
         *[(f"Recall (class {cls})", [r[i] for r in rec_cls_fold], rec_pooled[i], rec_pval_pooled[i], rec_pval_fold[i])
           for i, cls in enumerate(classes)],
         ("F1",                f1_fold,   f1_score(y, y_pred_cv, zero_division=0),        np.nan,          np.nan),
-        ("MCC",               mcc_fold,  matthews_corrcoef(y, y_pred_cv),                np.nan,          np.nan),
+        #("MCC",               mcc_fold,  matthews_corrcoef(y, y_pred_cv),                np.nan,          np.nan),
     ]
     metrics_df = pd.DataFrame(
         [(name, np.mean(folds), np.std(folds), np.std(folds) / np.sqrt(n_folds), pooled, pval_pooled, pval_fold, folds)
@@ -310,3 +310,99 @@ def classification_report_cv(X: np.ndarray,
                       .reset_index(drop=True))
 
     return metrics_df
+
+# %%
+def drop_indices_from_folds(folds, drop_indices):
+    """
+    Remove indices in drop_idx from cross-validation folds and
+    shift remaining indices to account for the removed rows.
+
+    Parameters
+    ----------
+    folds    : list of [train_indices, test_indices] pairs (arrays or lists)
+    drop_idx : list/array of integer indices to remove
+
+    Returns
+    -------
+    new_folds : same structure as folds, with drop_idx removed and
+                remaining indices shifted down accordingly.
+    """
+    drop_indices = sorted(drop_indices)
+
+    def shift(idx):
+        new = []
+        for i in idx:
+            if i in drop_indices:
+                continue  # remove
+            shift_down = sum(d < i for d in drop_indices)
+            new.append(i - shift_down)
+        return np.array(new)
+
+    return [[shift(tr), shift(te)] for tr, te in folds]
+
+# def drop_indices_from_folds(folds, drop_indices):
+#     """Remove a set of sample indices from every fold and re-index to the new dataset.
+
+#     After removal the returned indices refer to positions in the compacted dataset
+#     (original dataset minus the dropped rows). For every kept index ``i`` its new
+#     position is ``i - #{j in drop_indices : j < i}``, computed via
+#     ``np.searchsorted``.
+
+#     Parameters
+#     ----------
+#     folds : list of (array-like, array-like)
+#         Cross-validation folds as returned by ``PredefinedSplit.predefined_splits``
+#         or ``PredefinedSplit.split()``. Each element is a ``(train_idx, test_idx)``
+#         pair of integer arrays (positions in the *original* dataset).
+#     drop_indices : array-like of int
+#         Sample indices to remove (e.g. outlier row positions in X / y).
+
+#     Returns
+#     -------
+#     list of (np.ndarray, np.ndarray)
+#         Cleaned folds whose indices are valid positions in the new dataset
+#         ``X[keep_mask]`` / ``y[keep_mask]``.
+
+#     Examples
+#     --------
+#     >>> keep_mask  = ~is_outlier
+#     >>> X_clean, y_clean = X[keep_mask], y[keep_mask]
+#     >>> outlier_idx = np.where(is_outlier)[0]
+#     >>> clean_folds = drop_indices_from_folds(cv_test.predefined_splits, outlier_idx)
+#     >>> cv_clean = PredefinedSplit(predefined_splits=clean_folds)
+#     """
+#     import numpy as np
+#     import warnings
+
+#     drop_sorted = np.sort(np.asarray(drop_indices, dtype=int))
+#     drop_set    = set(drop_sorted.tolist())
+
+#     def _reindex(idx_array):
+#         """Keep non-dropped indices and shift each one down by the number of
+#         dropped indices that precede it."""
+#         kept = np.array([i for i in idx_array if i not in drop_set], dtype=int)
+#         # searchsorted with side='left' gives #{j in drop_sorted : j < i}
+#         shift = np.searchsorted(drop_sorted, kept, side="left")
+#         return kept - shift
+
+#     clean_folds = []
+#     for fold_idx, (tr, te) in enumerate(folds):
+#         tr_clean = _reindex(tr)
+#         te_clean = _reindex(te)
+#         if len(tr_clean) == 0 or len(te_clean) == 0:
+#             warnings.warn(
+#                 f"Fold {fold_idx} has {'no training' if len(tr_clean) == 0 else 'no test'} "
+#                 f"samples after dropping {len(drop_set)} indices.", UserWarning
+#             )
+#         clean_folds.append((tr_clean, te_clean))
+#     return clean_folds
+
+
+# %%
+if __name__ == "__main__":
+    folds = [
+        [np.array([0, 1, 2, 3]), np.array([4, 5, 6])],
+        [np.array([0, 4, 5, 6]), np.array([1, 2, 3])],
+    ]
+    new_folds = drop_indices_in_cv(folds, drop_idx=[5])  # your case
+# index 5 removed, all indices > 5 shifted down by 1

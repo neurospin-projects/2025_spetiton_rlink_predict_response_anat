@@ -326,6 +326,45 @@ def group_by_roi(feature_columns):
 
     return dict(roi_dict)
 
+
+def group_by_roi_fs(feature_columns):
+    """Group input columns by ROI name, removing optional 'Left' or 'Right' prefixes
+    Returns a dictionary where keys are ROI names and values are lists of column names.
+    
+    Args:
+        feature_columns (list): List of column names to group.
+    Returns:
+        dict: Dictionary with ROI names as keys and lists of column names as values.
+    
+    Exemple:
+        >>> feature_columns_ = [
+        ...     "Right Hippocampus_GM_Vol",
+        ...     "Left Hippocampus_GM_Vol",
+        ...     "Right Hippocampus_CSF_Vol",
+        ...     "Left Hippocampus_CSF_Vol",
+        ...     "3rd Ventricle_GM_Vol",
+        ...     "4th Ventricle_GM_Vol"
+        ... ]
+        >>> result = group_by_roi(feature_columns_)
+        >>> print(result)
+        {'Hippocampus': ['Right Hippocampus_GM_Vol', 'Left Hippocampus_GM_Vol', 'Right Hippocampus_CSF_Vol', 'Left Hippocampus_CSF_Vol'], '3rd Ventricle': ['3rd Ventricle_GM_Vol'], '4th Ventricle': ['4th Ventricle_GM_Vol']}
+        """
+    import re
+    from collections import defaultdict
+    roi_dict = defaultdict(list)
+
+    for col in feature_columns:
+        # Match optional 'Left' or 'Right' prefix
+        prefix_match = re.match(r'^(Left-|Right-)\s+', col)
+        roi_name = col
+
+        if prefix_match:
+            roi_name = col[len(prefix_match.group(0)):]  # Remove prefix
+
+        roi_dict[roi_name].append(col)
+
+    return dict(roi_dict)
+
 ################################################################################
 # %% Python utils
 
@@ -611,64 +650,6 @@ def load_folds(json_file):
     folds = [(train, test) for train, test in folds_list]
 
     return folds
-
-
-def drop_indices_from_folds(folds, drop_indices):
-    """Remove a set of sample indices from every fold and re-index to the new dataset.
-
-    After removal the returned indices refer to positions in the compacted dataset
-    (original dataset minus the dropped rows). For every kept index ``i`` its new
-    position is ``i - #{j in drop_indices : j < i}``, computed via
-    ``np.searchsorted``.
-
-    Parameters
-    ----------
-    folds : list of (array-like, array-like)
-        Cross-validation folds as returned by ``PredefinedSplit.predefined_splits``
-        or ``PredefinedSplit.split()``. Each element is a ``(train_idx, test_idx)``
-        pair of integer arrays (positions in the *original* dataset).
-    drop_indices : array-like of int
-        Sample indices to remove (e.g. outlier row positions in X / y).
-
-    Returns
-    -------
-    list of (np.ndarray, np.ndarray)
-        Cleaned folds whose indices are valid positions in the new dataset
-        ``X[keep_mask]`` / ``y[keep_mask]``.
-
-    Examples
-    --------
-    >>> keep_mask  = ~is_outlier
-    >>> X_clean, y_clean = X[keep_mask], y[keep_mask]
-    >>> outlier_idx = np.where(is_outlier)[0]
-    >>> clean_folds = drop_indices_from_folds(cv_test.predefined_splits, outlier_idx)
-    >>> cv_clean = PredefinedSplit(predefined_splits=clean_folds)
-    """
-    import numpy as np
-    import warnings
-
-    drop_sorted = np.sort(np.asarray(drop_indices, dtype=int))
-    drop_set    = set(drop_sorted.tolist())
-
-    def _reindex(idx_array):
-        """Keep non-dropped indices and shift each one down by the number of
-        dropped indices that precede it."""
-        kept = np.array([i for i in idx_array if i not in drop_set], dtype=int)
-        # searchsorted with side='left' gives #{j in drop_sorted : j < i}
-        shift = np.searchsorted(drop_sorted, kept, side="left")
-        return kept - shift
-
-    clean_folds = []
-    for fold_idx, (tr, te) in enumerate(folds):
-        tr_clean = _reindex(tr)
-        te_clean = _reindex(te)
-        if len(tr_clean) == 0 or len(te_clean) == 0:
-            warnings.warn(
-                f"Fold {fold_idx} has {'no training' if len(tr_clean) == 0 else 'no test'} "
-                f"samples after dropping {len(drop_set)} indices.", UserWarning
-            )
-        clean_folds.append((tr_clean, te_clean))
-    return clean_folds
 
 
 class PredefinedSplit(BaseCrossValidator):
