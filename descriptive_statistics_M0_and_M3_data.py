@@ -875,8 +875,8 @@ def main():
     test_illness_duration_relation_to_GM_atrophy()
 
 if __name__=="__main__":
-    main()
-
+    #main()
+    pass
 
 """
 ============================================================

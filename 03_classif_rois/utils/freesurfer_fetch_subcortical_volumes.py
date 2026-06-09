@@ -18,7 +18,7 @@ from pathlib import Path
 # ── Configuration ─────────────────────────────────────────────────────────────
 INPUT_BASEDIRECTORY = "/neurospin/rlink/PUBLICATION/rlink-mri-anat"
 GLOB_PATTERN = "derivatives/freesurfer-reconall-v7.1.1/sub-*/ses-*/stats/aseg.stats"
-OUTPUT_FILE = "aseg_volumes.tsv"
+OUTPUT_FILE = "fs_aseg_volumes.tsv"
 # ──────────────────────────────────────────────────────────────────────────────
 
 
