@@ -9,7 +9,7 @@ import os
 
 from utils.stats_pairwise import pairwise_stats
 from config import config
-
+import seaborn as sns
 
 INPUT_CAT12_DATA = './data/processed/roi-cat12vbm/study-rlink_mod-cat12vbm_type-roi+age+sex+site_lab-M00_v-5.csv'
 INPUT_FS_DATA = './data/processed/fs_aseg_volumes.tsv'
@@ -60,6 +60,15 @@ data_fs.columns = data_fs.columns.str.replace("-", "_")
 data_fs = pd.merge(data_fs, data_vbm[["response", "age", "sex", "site"]],
                    left_index=True, right_index=True, how='left')
 
+global_features_fs = \
+['BrainSeg', 'BrainSegNotVent', 'CerebralWhiteMatter', 'Cortex', 
+ 'EstimatedTotalIntraCranialVol', 'Mask', 'SubCortGray', 'SupraTentorial',
+ 'SupraTentorialNotVent', 'SurfaceHoles', 'TotalGray', 'VentricleChoroidVol', 
+ 'lhCerebralWhiteMatter', 'lhCortex', 'lhSurfaceHoles', 'rhCerebralWhiteMatter', 
+ 'rhCortex', 'rhSurfaceHoles']
+ 
+sns.violinplot(data=data_fs, x='sex', y='EstimatedTotalIntraCranialVol')
+
 # %% Pairwise Univariate statistics
 # =================================
 
@@ -104,7 +113,7 @@ features_fs = ['Left_Hippocampus', 'Right_Hippocampus',
 stats_list = []
 for feat in features_fs:
     stats = lm(
-        formula=f"{feat} ~ response + age + sex + site",
+        formula=f"{feat} ~ response + age + sex + site + EstimatedTotalIntraCranialVol",
         data=data_fs,
         return_stats=["response", "age", "sex"]
     )
@@ -128,7 +137,7 @@ print(f"Saved {excel_path}")
 # %%
 
 """
-        ivar      coef         t         p                       var Modality
+ivar      coef         t         p                       var Modality
 0   response -0.145219 -3.194811  0.001883   Left_Hippocampus_GM_Vol      VBM
 1        age -0.007889 -4.485544  0.000020   Left_Hippocampus_GM_Vol      VBM
 2        sex  0.099682  2.209510  0.029468   Left_Hippocampus_GM_Vol      VBM
@@ -141,17 +150,17 @@ print(f"Saved {excel_path}")
 9   response -0.048743 -3.595349  0.000509     Right_Amygdala_GM_Vol      VBM
 10       age -0.002191 -4.176680  0.000064     Right_Amygdala_GM_Vol      VBM
 11       sex  0.002591  0.192536  0.847721     Right_Amygdala_GM_Vol      VBM
-        ivar        coef         t             p                var Modality
-0   response -180.545467 -2.383496  1.909642e-02   Left_Hippocampus       FS
-1        age  -13.535455 -4.589486  1.331287e-05   Left_Hippocampus       FS
-2        sex -435.274680 -5.815387  7.750575e-08   Left_Hippocampus       FS
-3   response -205.610460 -2.850119  5.338414e-03  Right_Hippocampus       FS
-4        age   -9.952237 -3.543250  6.097390e-04  Right_Hippocampus       FS
-5        sex -346.354658 -4.858768  4.538026e-06  Right_Hippocampus       FS
-6   response  -73.537652 -1.988042  4.962559e-02      Left_Amygdala       FS
-7        age   -4.734715 -3.287555  1.408247e-03      Left_Amygdala       FS
-8        sex -251.982002 -6.894024  5.510838e-10      Left_Amygdala       FS
-9   response -107.002892 -2.888937  4.768034e-03     Right_Amygdala       FS
-10       age   -5.478365 -3.798892  2.535759e-04     Right_Amygdala       FS
-11       sex -276.203729 -7.546743  2.433596e-11     Right_Amygdala       FS
+        ivar        coef         t         p                var Modality
+0   response -147.217191 -2.121069  0.036492   Left_Hippocampus       FS
+1        age  -13.355417 -4.969214  0.000003   Left_Hippocampus       FS
+2        sex -196.104456 -2.279961  0.024823   Left_Hippocampus       FS
+3   response -171.940496 -2.637213  0.009751  Right_Hippocampus       FS
+4        age   -9.770353 -3.870003  0.000198  Right_Hippocampus       FS
+5        sex -104.732417 -1.296259  0.197994  Right_Hippocampus       FS
+6   response  -64.213369 -1.769974  0.079906      Left_Amygdala       FS
+7        age   -4.684346 -3.334451  0.001216      Left_Amygdala       FS
+8        sex -185.069128 -4.116415  0.000081      Left_Amygdala       FS
+9   response  -89.795343 -2.679458  0.008678     Right_Amygdala       FS
+10       age   -5.385410 -4.149980  0.000072     Right_Amygdala       FS
+11       sex -152.718992 -3.677308  0.000389     Right_Amygdala       FS
 """
