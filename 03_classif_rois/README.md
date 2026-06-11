@@ -20,6 +20,6 @@ https://github.com:neurospin/pylearn-mulm.git
 ```
 https://github.com/trent-b/iterative-stratification/archive/refs/heads/master.zip
 unzip master.zip
-ln -s iterative-stratification/iterstrat ./
+ln -sf iterative-stratification-master/iterstrat ./
 rm master.zip
 ```
