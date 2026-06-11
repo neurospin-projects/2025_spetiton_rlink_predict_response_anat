@@ -15,3 +15,11 @@ https://github.com:neurospin/pylearn-mulm.git
 
 /home/ed203246/git/2025_educhesnay_neuroimaging-ml-sklearn/2024_petiton_biobd-bsnip-predict-dx
 
+# iterative-stratification
+
+```
+https://github.com/trent-b/iterative-stratification/archive/refs/heads/master.zip
+unzip master.zip
+ln -s iterative-stratification/iterstrat ./
+rm master.zip
+```
