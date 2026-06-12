@@ -14,6 +14,56 @@ Conventions
 import pandas as pd
 
 
+def merge_on_index(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    how: str = "inner",
+    on=None,
+    left_on=None,
+    right_on=None,
+) -> pd.DataFrame:
+    """
+    Merge two DataFrames on their index plus optional additional columns.
+
+    The index is always included as a join key on both sides.
+    `on` / `left_on` / `right_on` add extra column keys (same semantics as
+    pd.DataFrame.merge).  The result is indexed by the left DataFrame's index.
+
+    Parameters
+    ----------
+    left, right : DataFrames to merge
+    how         : "inner" (default), "left", "right", or "outer"
+    on          : column(s) present in both frames to include as extra keys
+    left_on     : column(s) in left  to include as extra keys
+    right_on    : column(s) in right to include as extra keys
+    """
+    def _as_list(x):
+        if x is None:
+            return []
+        return [x] if isinstance(x, str) else list(x)
+
+    left_idx_name = left.index.name or "index"
+    right_idx_name = right.index.name or "index"
+
+    left_reset = left.reset_index()
+    right_reset = right.reset_index()
+
+    if on is not None:
+        extra = _as_list(on)
+        left_keys = [left_idx_name] + extra
+        right_keys = [right_idx_name] + extra
+    else:
+        left_keys = [left_idx_name] + _as_list(left_on)
+        right_keys = [right_idx_name] + _as_list(right_on)
+
+    merged = left_reset.merge(right_reset, left_on=left_keys, right_on=right_keys, how=how)
+
+    if left_idx_name != right_idx_name and right_idx_name in merged.columns:
+        merged = merged.drop(columns=[right_idx_name])
+
+    return merged.set_index(left_idx_name)
+
+
 def safe_merging_toref(
     ref: pd.DataFrame,
     new: pd.DataFrame,
