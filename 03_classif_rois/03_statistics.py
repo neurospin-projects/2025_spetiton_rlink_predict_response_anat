@@ -136,12 +136,9 @@ def stats_pairwise():
 # %% Linear regression univariate statistics
 # ==========================================
 
-s= "{feat} ~ response * sex + age + site + tiv"
-
 def stats_lm(data_vbm, data_fs, formula, return_stats):
     
     # VBM
-    return_stats = ["response", "age", "sex[T.M]"]
     stats_list = []
     for feat in FEATURES_HIPAMY_VBM:
         stats, lmfit = lm(
@@ -177,13 +174,211 @@ def stats_lm(data_vbm, data_fs, formula, return_stats):
     return stats_vbm, stats_fs
 
 
+def average_lr_rois(data, vars):
+    """
+    Average left and right hemisphere columns for each ROI name in `vars`.
+
+    All columns whose name contains the var string are averaged into a single
+    bilateral column named after the var.
+
+    Parameters
+    ----------
+    data : DataFrame
+    vars : list of ROI base names, e.g. ["Hippocampus", "Amygdala"]
+
+    Returns
+    -------
+    DataFrame with one new column per var (left/right originals are kept).
+    """
+    df = data.copy()
+    for var in vars:
+        lr_cols = [c for c in df.columns if var in c]
+        if not lr_cols:
+            raise ValueError(f"No columns found containing '{var}'")
+        df[var] = df[lr_cols].mean(axis=1)
+    return df
+
+
+def partial_residuals(data, dvars, formula, ifactors):
+    """
+    Fit OLS models and add partial-residual columns for each dependent variable.
+
+    For each dvar, fits `formula % dvar` and computes:
+      y_adj = intercept + sum(ifactor contributions) + residuals
+    stripping out all other covariate effects.
+
+    Parameters
+    ----------
+    data     : DataFrame
+    dvars    : dependent variable column names, e.g. ["Hippocampus", "Amygdala"]
+    formula  : model formula template with one %s placeholder,
+               e.g. "%s ~ response + sex + age + site + tiv"
+    ifactors : independent factors of interest whose contribution is kept,
+               e.g. ["response", "sex"]
+
+    Returns
+    -------
+    DataFrame with one new column per dvar named "{dvar}_adj".
+    """
+    import statsmodels.formula.api as smf
+
+    df = data.copy()
+    for dvar in dvars:
+        fit = smf.ols(formula % dvar, data=df).fit()
+        names = np.array(fit.model.exog_names)
+        keep = np.array([
+            "Intercept" in n or any(f in n for f in ifactors)
+            for n in names
+        ])
+        df[f"{dvar}_adj"] = (
+            fit.model.exog[:, keep] @ fit.params.values[keep] + fit.resid.values
+        )
+    return df
+
+
+def extract_adjusted(data, dvars, ivars):
+    """
+    Select and clean up the output of `partial_residuals`.
+
+    Keeps only the `ivars` columns (independent factors, e.g. "response", "sex")
+    and the `{dvar}_adj` columns, renaming the latter by stripping the "_adj" suffix.
+
+    Parameters
+    ----------
+    data  : DataFrame (output of `partial_residuals`)
+    dvars : dependent variable base names, e.g. ["Hippocampus", "Amygdala"]
+    ivars : independent variable columns to keep, e.g. ["response", "sex"]
+
+    Returns
+    -------
+    DataFrame with columns ivars + dvars (adjusted values, suffix removed).
+    """
+    adj_cols = [f"{dvar}_adj" for dvar in dvars]
+    df = data[ivars + adj_cols].copy()
+    df = df.rename(columns={f"{dvar}_adj": dvar for dvar in dvars})
+    return df
+
+
+_PAGE_W_IN = 6.3   # A4 usable width (210mm - 2x25mm margins) in inches
+
+def violinplot_adjusted(data, dvars, x=None, hue=None,
+                        split=True, gap=0.1, inner="quart", swarm=False,
+                        hue_statannotations=False, annot_text_format="star",
+                        figsize=None, fontsize=7):
+    """
+    Violin plots of adjusted dependent variable columns side by side.
+
+    Expects `dvars` columns to already exist in `data` (e.g. produced by
+    `extract_adjusted`).
+
+    Default layout: each subplot occupies one quarter of page width so that
+    two subplots together fill half a page (suitable for 2-column journal layout).
+
+    Parameters
+    ----------
+    data                : DataFrame
+    dvars               : dependent variable column names, e.g. ["Hippocampus", "Amygdala"]
+    x                   : column used as x-axis grouping, e.g. "response"
+    hue                 : column used for color grouping, e.g. "sex"
+    split               : draw half-violins for each hue level (requires hue)
+    gap                 : gap between split violin halves
+    inner               : interior representation ("quart", "box", "stick", None)
+    swarm               : overlay individual data points as a swarm plot.
+                          With split=True, dodge=True is used so each hue group's
+                          points align roughly with their violin half (swarmplot has
+                          no native split mode, so alignment is approximate).
+    hue_statannotations : if True, annotate Mann-Whitney U p-values for each pair
+                          of hue levels within every x category (requires `hue`).
+    annot_text_format   : "star" (default) shows only stars; "star+stat" shows
+                          stars and the U statistic, e.g. "** (U=312.0)".
+    figsize             : (width, height) in inches. Defaults to quarter-page
+                          width per subplot, height = width * 1.8.
+    fontsize            : base font size in points (default 7 for publication).
+    """
+    from itertools import combinations
+    import matplotlib.pyplot as plt
+
+    subplot_w = _PAGE_W_IN / 4          # quarter page per subplot
+    if figsize is None:
+        figsize = (subplot_w * len(dvars), subplot_w * 1.8)
+
+    with plt.rc_context({
+        "font.size":        fontsize,
+        "axes.titlesize":   fontsize + 1,
+        "axes.labelsize":   fontsize,
+        "xtick.labelsize":  fontsize,
+        "ytick.labelsize":  fontsize,
+        "legend.fontsize":  fontsize,
+    }):
+        fig, axes = plt.subplots(1, len(dvars), figsize=figsize, sharey=False)
+        if len(dvars) == 1:
+            axes = [axes]
+
+        if hue_statannotations and hue is not None:
+            from statannotations.Annotator import Annotator
+            hue_vals = sorted(data[hue].unique())
+            if x is not None:
+                x_vals = sorted(data[x].unique())
+                pairs = [
+                    [(x_val, h1), (x_val, h2)]
+                    for x_val in x_vals
+                    for h1, h2 in combinations(hue_vals, 2)
+                ]
+                annot_params = dict(data=data, x=x, y=None, hue=hue)
+            else:
+                pairs = list(combinations(hue_vals, 2))
+                annot_params = dict(data=data, x=hue, y=None)
+
+        for ax, dvar in zip(axes, dvars):
+            sns.violinplot(data=data, x=x, y=dvar, hue=hue, ax=ax,
+                           split=split, gap=gap, inner=inner)
+            if swarm:
+                swarm_palette = {v: "grey" for v in sorted(data[hue].unique())} \
+                                 if hue is not None else None
+                swarm_kws = dict(data=data, x=x, y=dvar, hue=hue, ax=ax,
+                                 dodge=hue is not None, size=3, legend=False)
+                if swarm_palette is not None:
+                    swarm_kws["palette"] = swarm_palette
+                else:
+                    swarm_kws["color"] = "grey"
+                sns.swarmplot(**swarm_kws)
+            if hue_statannotations and hue is not None:
+                annotator = Annotator(ax, pairs, **{**annot_params, "y": dvar})
+                if annot_text_format == "star+stat":
+                    annotator.configure(test="Mann-Whitney", text_format="star", verbose=0)
+                    annotator.apply_test()
+                    def _pval_to_stars(p):
+                        if p <= 0.0001: return "****"
+                        if p <= 0.001:  return "***"
+                        if p <= 0.01:   return "**"
+                        if p <= 0.05:   return "*"
+                        return "ns"
+                    custom_texts = []
+                    for ann in annotator.annotations:
+                        p = ann.data.pvalue
+                        s = ann.data.stat_value
+                        u_str = f"{s:.0f}" if abs(s) >= 10 else f"{s:.1f}"
+                        custom_texts.append(f"{_pval_to_stars(p)}\nU={u_str}")
+                    annotator.set_custom_annotations(custom_texts)
+                    annotator.annotate()
+                else:
+                    annotator.configure(test="Mann-Whitney",
+                                        text_format=annot_text_format).apply_and_annotate()
+            ax.set_title(dvar)
+            ax.set_ylabel("Adjusted value")
+            ax.set_xlabel(x if x is not None else "")
+
+        fig.tight_layout()
+    return fig, axes
+
+
 # %% ===========================================================================
 if __name__ == '__main__':
 
 
     merge_cols = ["age", "sex", "response"]
 
-        
+
     data_vbm, data_fs, data_vbm_fs = load_data()
     data_fs = data_fs.rename(columns={"EstimatedTotalIntraCranialVol":"tiv"})
     sns.violinplot(data=data_vbm, x='sex', y='tiv')
@@ -195,6 +390,9 @@ if __name__ == '__main__':
 
     
     stats_vbm_pairwise = stats_pairwise()
+    
+    
+    # Unscaled data, use tiv as regressor
     stats_unscaled_vbm, stats_unscaled_fs = stats_lm(data_vbm, data_fs,
                 formula="%s ~ response + sex + age + site + tiv",
                 return_stats=["response", "age", "sex[T.M]"])
@@ -203,7 +401,7 @@ if __name__ == '__main__':
                 formula="%s ~ response * sex + age + site + tiv",
                 return_stats=["response", "age", "sex[T.M]", "response:sex[T.M]"])
 
-    # Same analysis on scaled data
+    # Scaled data
     target_tiv = 1500
     scaling_factor = target_tiv / data_vbm["tiv"]
     data_vbm_scaled = data_vbm.copy()
@@ -224,6 +422,17 @@ if __name__ == '__main__':
         formula="%s ~ response * sex + age + site",
         return_stats=["response", "age", "sex[T.M]", "response:sex[T.M]"])
 
+    # Sex-stratified statistics, on unscaled data
+    stats_m_unscaled_vbm, stats_m_unscaled_fs = stats_lm(data_vbm[data_vbm.sex=="M"], 
+                                                         data_fs[data_fs.sex=="M"],
+                formula="%s ~ response + age + site + tiv",
+                return_stats=["response", "age"])
+    stats_f_unscaled_vbm, stats_f_unscaled_fs = stats_lm(data_vbm[data_vbm.sex=="F"], 
+                                                         data_fs[data_fs.sex=="F"],
+                formula="%s ~ response + age + site + tiv",
+                return_stats=["response", "age"])
+    
+    
     with pd.option_context('display.max_rows', None):
         print(stats_scaled_interaction_vbm)
         
@@ -231,13 +440,58 @@ if __name__ == '__main__':
         print(stats_scaled_interaction_fs)
     
     # %% Save results
-    excel_path = 'reports/statistics_univariate_interactions.xlsx'
+    excel_path = 'reports/statistics_univariate.xlsx'
+    sheets = {
+        "pairwise_vbm":              stats_vbm_pairwise,
+        "unscaled_vbm":              stats_unscaled_vbm,
+        "unscaled_fs":               stats_unscaled_fs,
+        "unscaled_interact_vbm":     stats_unscaled_interaction_vbm,
+        "unscaled_interact_fs":      stats_unscaled_interaction_fs,
+        "scaled_vbm":                stats_scaled_vbm,
+        "scaled_fs":                 stats_scaled_fs,
+        "scaled_interact_vbm":       stats_scaled_interaction_vbm,
+        "scaled_interact_fs":        stats_scaled_interaction_fs,
+        "sex_M_unscaled_vbm":        stats_m_unscaled_vbm,
+        "sex_M_unscaled_fs":         stats_m_unscaled_fs,
+        "sex_F_unscaled_vbm":        stats_f_unscaled_vbm,
+        "sex_F_unscaled_fs":         stats_f_unscaled_fs,
+    }
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        stats_vbm_pairwise.to_excel(writer, sheet_name="stats_vbm_pairwise", index=False)
-        stats_vbm.to_excel(writer, sheet_name="stats_vbm_lm", index=False)
-        stats_fs.to_excel(writer, sheet_name="stats_fs_lm", index=False)
+        for sheet_name, df in sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
     print(f"Saved {excel_path}")
 
+    # %%
+    # Plots of ROI volumes adjusted for nuisance covariates
+    rois = ["Hippocampus", "Amygdala"]
+    formula = "%s ~ response + sex + age + site + tiv"
+    ivars = [ivar.strip() for ivar in formula.split("~")[1].split("+")]
+
+    data_vbm_lr = average_lr_rois(data_vbm, rois)
+    data_vbm_adj = partial_residuals(data_vbm_lr, rois, formula, ifactors=["response", "sex"])
+    data_vbm_plot = extract_adjusted(data_vbm_adj, rois, ivars=["response", "sex"])
+
+    fig, axes = violinplot_adjusted(data_vbm_plot, rois, hue="response",
+                                    split=True, swarm=True,)
+    fig.savefig("reports/statistics_vbm_adjusted_response.svg", bbox_inches="tight")
+
+    fig, axes = violinplot_adjusted(data_vbm_plot, rois, hue="response",
+                                    split=True, swarm=True,
+                                    hue_statannotations=True,
+                                    annot_text_format="star+stat")
+    fig.savefig("reports/statistics_vbm_adjusted_response_annotated.svg", bbox_inches="tight")
+
+    # fig, axes = violinplot_adjusted(data_vbm_plot, rois, x="response", hue="sex")
+    # fig.savefig("reports/statistics_vbm_adjusted_response_by_sex.png", dpi=150, bbox_inches="tight")
+
+    # fig, axes = violinplot_adjusted(data_vbm_plot, rois, x="sex", hue="response", swarm=True, split=False)
+    # fig.savefig("reports/statistics_vbm_adjusted_sex_by_response.png", dpi=150, bbox_inches="tight")
+
+
+    fig, axes = violinplot_adjusted(data_vbm_plot, rois,
+        x="sex", hue="response", swarm=True, split=True,
+        hue_statannotations=True, annot_text_format="star+stat")
+    fig.savefig("reports/statistics_vbm_adjusted_sex_by_response.svg", bbox_inches="tight")
 # %%
 
 """
